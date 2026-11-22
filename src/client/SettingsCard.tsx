@@ -41,6 +41,8 @@ import css from './Market.module.css'
 import { api, applyGithubRouting, marketHeldVersionText, profileBlockedText } from './market-data.ts'
 import type { MarketLocaleStore, MarketStatus, Translate, UpdateStatus } from './market-data.ts'
 import { useUpdateNotifications, refreshUpdateNotifications } from './update-notifications.ts'
+import { CatalogsPanel, catalogsVisible, readCatalogs } from './CatalogsPanel.tsx'
+import type { CatalogsData } from './CatalogsPanel.tsx'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import type { EntryKey, EntryVisibility } from './entry-visibility.ts'
 
@@ -291,6 +293,8 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
     return entries.subscribe(() => { bumpEntries(v => v + 1) })
   }, [entries])
   const [status, setStatus] = useState<SelfStatus | null>(null)
+  /** The plugin catalogs list; null until read, and for a server that predates it. */
+  const [catalogs, setCatalogs] = useState<CatalogsData | null>(null)
   const [update, setUpdate] = useState<SelfUpdate | null>(null)
   const notificationSnapshot = useUpdateNotifications()
   useEffect(() => {
@@ -344,6 +348,11 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
           })
         }
       }
+      try {
+        const response = await fetch(api('/dsh-market/catalogs'), { cache: 'no-store' })
+        const data = readCatalogs(await response.json())
+        if (live) setCatalogs(data)
+      } catch { /* a server without the list simply has no catalogs section */ }
       try {
         const response = await fetch(api('/dsh-market/updates'), { cache: 'no-store' })
         const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
@@ -493,6 +502,14 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
       }
     })()
   }, [post, t])
+
+  /** Re-read the catalogs list after one was added or removed. */
+  const reloadCatalogs = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch(api('/dsh-market/catalogs'), { cache: 'no-store' })
+      setCatalogs(readCatalogs(await response.json()))
+    } catch { /* keep the list as it was */ }
+  }, [])
 
   /** Save or clear the single user-facing GitHub escape route. */
   const onGithubProxy = useCallback((proxy: string | null) => {
@@ -660,7 +677,10 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
       ),
     ))
   }
-  const advanced = entryRows.length > 0
+  const catalogsBlock = catalogsVisible(catalogs)
+    ? h(CatalogsPanel, { key: 'catalogs', data: catalogs, t, lang: activeLocale, reload: reloadCatalogs })
+    : null
+  const advanced = entryRows.length > 0 || catalogsBlock !== null
     ? h('div', { className: css.setAdvanced },
         h('button', {
           type: 'button',
@@ -678,7 +698,9 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
             h(IconChevronDownOutline14, { size: 14 })),
         ),
         advancedOpen
-          ? h('div', { id: advancedId, className: css.setAdvancedBody }, entryRows.map((node, index) => h(Fragment, { key: index }, node)))
+          ? h('div', { id: advancedId, className: css.setAdvancedBody },
+              entryRows.map((node, index) => h(Fragment, { key: index }, node)),
+              catalogsBlock)
           : null,
       )
     : null

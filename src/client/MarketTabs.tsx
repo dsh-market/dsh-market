@@ -20,6 +20,7 @@ import {
 import { api, formatCount, orderedCategories, themeSwatch } from './market-data.ts'
 import { SearchInput } from './SearchInput.tsx'
 import { MarketLogo } from './MarketLogo.tsx'
+import { SourceFilter, SourceProblems, useFailedSources } from './SourceParts.tsx'
 import { EmptyResults, FilterMenu, LoadMore, Pager } from './MarketListControls.tsx'
 import { Masonry } from './MarketLayout.tsx'
 import type { MarketStateCtx } from './market-state.tsx'
@@ -298,15 +299,20 @@ export function BackupTab({ c }: { c: BackupTabCtx }) {
 type CatalogStatusCtx = Pick<MarketStateCtx, 'loadError' | 't'>
   & Pick<MarketSyncCtx, 'loadCatalog'>
 
-function CatalogStatus({ c }: { c: CatalogStatusCtx }) {
+function CatalogStatus({ c }: { c: CatalogStatusCtx & Partial<Pick<MarketStateCtx, 'lang'>> }) {
   const { loadError, loadCatalog, t } = c
+  const failedSources = useFailedSources()
   if (loadError === null) {
     return <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
   }
   return (
     <div className={css.empty}>
       <div>{t('loadFail')}</div>
-      <div className={css.err}>{loadError}</div>
+      {failedSources.length > 0
+        // Catalogs beyond the public one: say which, in plain words, instead of
+        // the joined diagnostic string below.
+        ? <SourceProblems sources={failedSources} lang={c.lang ?? 'en'} t={t} onRetry={() => { void loadCatalog() }} />
+        : <div className={css.err}>{loadError}</div>}
       <Button variant="outline" size="sm" className={css.retryBtn} onClick={() => { void loadCatalog() }}>
         {t('loadRetry')}
       </Button>
@@ -318,7 +324,7 @@ type DiscoverTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
   & Pick<MarketStateCtx,
     'bodyRef' | 'cat' | 'catsStuck' | 'catsWrapRef' | 'compatibleWithHost' | 'data' |
     'discoverSearchReset' | 'hostVersion' | 'lang' | 'q' | 'resetDiscoverSearch' |
-    'setCat' | 'setCatsOpen' | 'setCatsSentinel' | 'setCompatibleWithHost' | 'setQ' | 'setSortDir' |
+    'setCat' | 'source' | 'setSource' | 'setCatsOpen' | 'setCatsSentinel' | 'setCompatibleWithHost' | 'setQ' | 'setSortDir' |
     'setSortField' | 'setStuckExpanded' | 'setTimeRange' | 'sortDir' | 'sortField' | 'surface' |
     'timeRange' | 'visibleCats'>
   & Pick<MarketInstallCtx,
@@ -333,14 +339,15 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
   const {
     basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize,
     compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent,
-    hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadError,
+    hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError,
     loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll,
     pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile,
-    resetDiscoverSearch, setCat, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ,
+    resetDiscoverSearch, setCat, source, setSource, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ,
     setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField,
     surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats,
   } = c
   const recentRowRef = useRef<HTMLDivElement | null>(null)
+  const failedSources = useFailedSources()
   const aiSearch = useAiSearch(t)
   // AI picks resolved to the catalog's own entries (by repository URL: names
   // are not unique), in the model's order, drawn exactly like ordinary results.
@@ -426,6 +433,7 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                   }}
                 />
                 </div>
+                <SourceFilter data={data} active={source} onPick={setSource} lang={lang} t={t} />
                 {/* Quiet unless something is actually hidden or unchecked: a line that
                     says "hid 0" on every visit trains people to skip it. */}
                 {compatibleWithHost && typeof hostVersion === 'string' && pageHostPackages.length > 0
@@ -441,6 +449,7 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
               </div>
               </div>
               {aiSearch.status}
+              <SourceProblems sources={failedSources} lang={lang} t={t} onRetry={() => { void loadCatalog() }} />
               {aiPlugins === null && hasRecent && (recentHidden
                 ? <button type="button" className={css.recentShow} onClick={showRecent}>
                     <IconChevronRightOutline14 size={14} />{t('recentShow')}
@@ -478,9 +487,9 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                     : <Masonry items={aiPlugins} render={plugin => pluginCard(plugin)} />)
                 : pagePlugins.length === 0
                 ? <EmptyResults message={basePage.length > 0 ? 'hostFilterEmpty' : pluginsAll.length > 0 ? 'blockedFilteredEmpty' : 'empty'} t={t}
-                    onClear={data.plugins.length > 0 && (q !== '' || cat !== 'all' || timeRange !== 'all' || compatibleWithHost) ? () => {
+                    onClear={data.plugins.length > 0 && (q !== '' || cat !== 'all' || source !== 'all' || timeRange !== 'all' || compatibleWithHost) ? () => {
                       setQ(''); resetDiscoverSearch(value => value + 1)
-                      setCat('all'); setTimeRange('all'); setCompatibleWithHost(false)
+                      setCat('all'); setSource('all'); setTimeRange('all'); setCompatibleWithHost(false)
                       bodyRef.current?.querySelector('input')?.focus()
                     } : undefined}
                   />

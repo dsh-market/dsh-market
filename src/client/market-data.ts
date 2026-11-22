@@ -90,6 +90,11 @@ export interface RegistryPlugin {
   icon?: string | null
   /** Author-curated screenshot URLs from the registry (#61); optional. */
   screenshots?: string[]
+  /**
+   * Which added catalog listed this entry. Absent for the public catalog's
+   * own entries, so nothing about an ordinary card changes.
+   */
+  source?: { id: string; label: LocalizedText }
 }
 
 /** Category ids for one entry, de-duplicated in declaration order. */
@@ -105,6 +110,35 @@ export function pluginCategories(plugin: Pick<RegistryPlugin, 'category'>): stri
   return categories
 }
 
+/**
+ * Whether an entry's link is a GitHub repository page. Entries from an added
+ * catalog may link to any host, and the GitHub mark beside the name would
+ * be a wrong promise for those.
+ */
+export function linksToGithub(plugin: Pick<RegistryPlugin, 'url' | 'source'>): boolean {
+  // The public catalog is GitHub by definition; only added catalogs can differ.
+  return plugin.source === undefined || parseSourceUrl(plugin.url) !== null
+}
+
+/** Why one catalog could not be read; the page words it, see `sourceErrorText`. */
+export interface SourceError {
+  code: 'network' | 'timeout' | 'auth' | 'http' | 'invalid' | 'empty' | 'file' | 'env' | 'policy'
+  detail: string
+}
+
+/** What the server knows about one catalog source. Never carries a secret. */
+export interface CatalogSourceInfo {
+  id: string
+  kind: 'public' | 'policy' | 'user'
+  label: LocalizedText
+  where: string
+  status: 'ok' | 'failed' | 'off'
+  count: number
+  skipped: number
+  error?: SourceError
+  locked: boolean
+}
+
 /** The catalog payload under `registry` in /dsh-market/registry. */
 export interface Registry {
   /** Catalog generation marker; unchanged payload generations share caches. */
@@ -112,6 +146,29 @@ export interface Registry {
   count: number
   categories: Record<string, LocalizedText>
   plugins: RegistryPlugin[]
+  /** Present only when more than the public catalog is configured. */
+  sources?: CatalogSourceInfo[]
+}
+
+/** A source's name in the reader's language, then English, then whatever exists. */
+export function sourceLabel(label: LocalizedText | undefined, lang: string): string {
+  if (label === undefined) return ''
+  return label[lang] || label.en || label.zh || Object.values(label).find(text => text !== undefined && text !== '') || ''
+}
+
+/** The sources a reader can filter by: only those that actually loaded. */
+export function loadedSources(registry: Pick<Registry, 'sources'> | null): CatalogSourceInfo[] {
+  return (registry?.sources ?? []).filter(source => source.status === 'ok')
+}
+
+/** The one-line reason a source failed, in the reader's words (what happened, what to do). */
+export function sourceErrorText(error: SourceError | undefined, t: Translate): string {
+  if (error === undefined) return t('srcErrNetwork')
+  const key = {
+    network: 'srcErrNetwork', timeout: 'srcErrTimeout', auth: 'srcErrAuth', http: 'srcErrHttp',
+    invalid: 'srcErrInvalid', empty: 'srcErrEmpty', file: 'srcErrFile', env: 'srcErrEnv', policy: 'srcErrNetwork',
+  }[error.code]
+  return t(key).replace('{0}', error.detail)
 }
 
 /** Discovery-time verdict derived from a package's public manifest. */
@@ -633,6 +690,8 @@ export interface ListQuery {
   hostCompatibility?: HostCompatibilityMap
   /** Hide only entries that are known to be incompatible; unknown stays visible. */
   compatibleWithHost?: boolean
+  /** Keep only this catalog's entries; 'all' or absent keeps everything. 'public' is the public catalog. */
+  source?: string
 }
 
 /**
@@ -893,6 +952,7 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     if (isMarketItself(plugin)) return []
     const categories = pluginCategories(plugin)
     if (options.category !== 'all' && !categories.includes(options.category)) return []
+    if (options.source !== undefined && options.source !== 'all' && (plugin.source?.id ?? 'public') !== options.source) return []
     if (options.sinceDays !== undefined && !withinDays(plugin.added, options.sinceDays)) return []
     const compatibilityKey = options.compatibleWithHost === true ? hostCompatibilityKey(plugin) : null
     if (compatibilityKey !== null && options.hostCompatibility?.[compatibilityKey]?.status === 'incompatible') return []

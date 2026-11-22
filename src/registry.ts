@@ -9,6 +9,9 @@ import { configuredProxy, marketFetch } from './net.ts'
 import { catalogFromPackage } from './catalog-npm.ts'
 import { activeRegion, catalogSourcesFor, routesFor, type CatalogSource, type Region } from './regions.ts'
 import { NPM_NAME_RE } from './sources.ts'
+import {
+  catalogConfig, forgetExtraCatalogs, loadExtra, mergeSources, PUBLIC_LABEL, type ExtraResult, type SourceInfo,
+} from './catalogs.ts'
 
 /**
  * How long a successful catalog load may take before it leaves a line behind.
@@ -71,6 +74,13 @@ export interface RegistryPlugin {
 
   install: string
   added: string
+  /**
+   * Which catalog this entry came from. Present ONLY on entries from a
+   * catalog the organization or the user added; the public catalog's entries
+   * carry none, so a plain install looks exactly as it always did. Stamped by
+   * the market after merging, never taken from a catalog's own text.
+   */
+  source?: { id: string; label: Record<string, string> }
   /**
    * Catalog-side deprecation flags (#60): supplied by awesome-dsh-plugin,
    * absent for every normal entry — the market only consumes them, so a
@@ -135,6 +145,8 @@ export interface Registry {
   count: number
   categories: Record<string, Record<string, string>>
   plugins: RegistryPlugin[]
+  /** Per-source status; present only when more than the public catalog is configured. */
+  sources?: SourceInfo[]
 }
 
 /**
@@ -252,6 +264,9 @@ function asRegistry(value: unknown): Registry {
 export function forgetCatalog(): void {
   served = null
   pendingCatalog = null
+  pendingMerged = null
+  lastMerged = null
+  forgetExtraCatalogs()
   catalogRevision += 1
 }
 
@@ -276,7 +291,7 @@ export function forgetCatalog(): void {
  * would rebuild exactly the fallback this replaced.
  * @throws when the catalog cannot be fetched or does not look like one.
  */
-export function loadRegistry(region: Region = activeRegion()): Promise<Registry> {
+function loadPublicCatalog(region: Region): Promise<Registry> {
   const ownSources = routesFor(region).catalog.length
   const catalogSources = catalogSourcesFor(region)
   const key = JSON.stringify([region, ownSources, catalogSources.map(sourceKey)])
@@ -288,6 +303,89 @@ export function loadRegistry(region: Region = activeRegion()): Promise<Registry>
   })
   pendingCatalog = { key, result }
   return result
+}
+
+/** Every source failed (or the only one did): the message for the page, and what each source said. */
+export class CatalogLoadError extends Error {
+  readonly sources: SourceInfo[]
+  constructor(message: string, sources: SourceInfo[]) {
+    super(message)
+    this.name = 'CatalogLoadError'
+    this.sources = sources
+  }
+}
+
+let pendingMerged: { key: string; result: Promise<Registry> } | null = null
+/** The last merge, reused while none of its inputs changed (callers key caches on the object). */
+let lastMerged: { inputs: unknown[]; allow: string; out: Registry } | null = null
+
+/**
+ * The catalog, revalidated on each new load: the public catalog plus whatever
+ * the organization's policy and the user added.
+ *
+ * With nothing configured this IS {@link loadPublicCatalog} — the same
+ * requests, the same object — which is the promise that a user with no policy
+ * and no extra catalogs sees no change. Otherwise every source is read on its
+ * own, in parallel: one that fails costs the user that source and is reported
+ * in `sources`, never the others.
+ * @throws when nothing could be loaded; {@link CatalogLoadError} carries the per-source detail.
+ */
+export function loadRegistry(region: Region = activeRegion()): Promise<Registry> {
+  const config = catalogConfig()
+  if (!config.active) return loadPublicCatalog(region)
+  const key = JSON.stringify([region, config.signature])
+  if (pendingMerged?.key === key) return pendingMerged.result
+  const result = loadMerged(region, config).finally(() => {
+    if (pendingMerged?.result === result) pendingMerged = null
+  })
+  pendingMerged = { key, result }
+  return result
+}
+
+async function loadMerged(region: Region, config: ReturnType<typeof catalogConfig>): Promise<Registry> {
+  const publicLoad: Promise<{ registry: Registry } | { error: unknown }> | null = config.publicEnabled
+    ? loadPublicCatalog(region).then(registry => ({ registry }), (error: unknown) => ({ error }))
+    : null
+  const extras: ExtraResult[] = await Promise.all(config.extras.map(source => loadExtra(source)))
+  const publicResult = publicLoad === null ? null : await publicLoad
+  const publicRegistry = publicResult !== null && 'registry' in publicResult ? publicResult.registry : null
+  const publicInfo: SourceInfo = {
+    id: 'public',
+    kind: 'public',
+    label: PUBLIC_LABEL,
+    where: '',
+    status: publicResult === null ? 'off' : publicRegistry !== null ? 'ok' : 'failed',
+    count: publicRegistry?.plugins.length ?? 0,
+    skipped: 0,
+    locked: config.policy.publicCatalog === false,
+    ...(publicResult !== null && 'error' in publicResult
+      ? { error: { code: 'network' as const, detail: (publicResult.error instanceof Error ? publicResult.error.message : String(publicResult.error)).slice(0, 400) } }
+      : {}),
+  }
+  const loaded = extras.filter(extra => extra.registry !== null)
+  if (publicRegistry === null && loaded.length === 0) {
+    const sources = [...(publicResult === null ? [] : [publicInfo]), ...extras.map(extra => extra.info)]
+    // The public catalog's own explanation reads best when it is the only
+    // source there is; otherwise name the first thing that broke.
+    const message = publicResult !== null && 'error' in publicResult && config.extras.length === 0
+      ? (publicResult.error instanceof Error ? publicResult.error.message : String(publicResult.error))
+      : sources.map(source => `${source.id}: ${source.error?.code ?? 'off'}${source.error?.detail ? ` ${source.error.detail}` : ''}`).join(' · ')
+    throw new CatalogLoadError(message === '' ? 'no catalog is available' : message, sources)
+  }
+  const inputs: unknown[] = [publicRegistry, ...extras.map(extra => extra.registry)]
+  const stamp = JSON.stringify([config.policy.allow, publicInfo, extras.map(extra => extra.info)])
+  if (lastMerged !== null && lastMerged.allow === stamp
+    && lastMerged.inputs.length === inputs.length && lastMerged.inputs.every((value, index) => value === inputs[index])) {
+    return lastMerged.out
+  }
+  const out = mergeSources({
+    publicRegistry,
+    publicInfo: publicResult === null ? null : publicInfo,
+    extras,
+    allow: config.policy.allow,
+  })
+  lastMerged = { inputs, allow: stamp, out }
+  return out
 }
 
 async function fetchCatalog(region: Region, ownSources: number, catalogSources: CatalogSource[], revision: number): Promise<Registry> {

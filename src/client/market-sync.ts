@@ -31,7 +31,7 @@ import type { MarketSectionProps } from './market-types.ts'
 
 type MarketSyncIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
-    'blockedNames' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cat' | 'catsFloorRef' | 'checkoutRecovery' |
+    'blockedNames' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cat' | 'source' | 'catsFloorRef' | 'checkoutRecovery' |
     'compatibility' | 'compatibleWithHost' | 'data' | 'disabledNames' | 'doneUrls' | 'favSortDir' |
     'favSortField' | 'favTimeRange' | 'favoriteUrls' | 'headFloorRef' | 'headRef' | 'idleStrikes' |
     'installed' | 'installedBundles' | 'installedView' | 'lang' | 'lightbox' | 'marketGone' |
@@ -56,7 +56,7 @@ type MarketSyncIn = { props: MarketSectionProps }
 /** drain/repair status, catalog loading, compatibility checks, sticky layout effects. */
 export function useMarketSync(c: MarketSyncIn) {
   const {
-    blockedNames, bodyRef, bootId, busyUrl, cat, catsFloorRef, checkoutRecovery, compatibility,
+    blockedNames, bodyRef, bootId, busyUrl, cat, source, catsFloorRef, checkoutRecovery, compatibility,
     compatibleWithHost, data, disabledNames, doneUrls, favSortDir, favSortField, favTimeRange,
     favoriteUrls, headFloorRef, headRef, idleStrikes, installed, installedBundles, installedView,
     lang, lightbox, marketGone, mounted, mountedRef, patchDisabledNames, pendingUpdate, pluginsYRef,
@@ -863,7 +863,7 @@ const knownHostIdsRef = useRef(new Set<string>())
       }
     }
     setShowTop(false)
-  }, [surface, themesFullscreen, tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
+  }, [surface, themesFullscreen, tab, q, cat, source, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
   // Menus are portaled and would stay put while the host page scrolls. `.body`
   // does not scroll on this surface (unless Themes fullscreen), so the close
   // and the back-to-top affordance listen to the host.

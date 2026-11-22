@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
+  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, sourceLabel, sourceErrorText, loadedSources, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate, ScreenshotRejection } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -1350,5 +1350,45 @@ describe('catalogEntryForInstalled: Release archives match only the approved rep
     'https://github.com/Owner/Repo.git/releases/latest/download/x.tgz',
   ])('does not match look-alike %s', spec => {
     expect(catalogEntryForInstalled([entry], 'other-name', spec, [], [])).toBeUndefined()
+  })
+})
+
+describe('catalog sources on the client', () => {
+  const acme = { id: 'acme', label: { en: 'Acme', zh: 'Acme 内部' } }
+  const LIST = [
+    plugin({ name: 'pub', url: 'https://github.com/o/pub' }),
+    plugin({ name: 'priv', url: 'https://repo.acme/priv', source: acme }),
+    plugin({ name: 'mine', url: 'https://repo.mine/mine', source: { id: 'user-1', label: { en: 'Mine' } } }),
+  ]
+
+  it('narrows the discover list to one catalog, "public" meaning the entries with no source', () => {
+    const query = { category: 'all', query: '', lang: 'en', sort: 'x' }
+    expect(visiblePlugins(LIST, query).map(p => p.name)).toEqual(['pub', 'priv', 'mine'])
+    expect(visiblePlugins(LIST, { ...query, source: 'all' }).map(p => p.name)).toEqual(['pub', 'priv', 'mine'])
+    expect(visiblePlugins(LIST, { ...query, source: 'acme' }).map(p => p.name)).toEqual(['priv'])
+    expect(visiblePlugins(LIST, { ...query, source: 'public' }).map(p => p.name)).toEqual(['pub'])
+    expect(visiblePlugins(LIST, { ...query, source: 'nope' })).toEqual([])
+  })
+
+  it('names a source in the reader\'s language, then English, then anything', () => {
+    expect(sourceLabel(acme.label, 'zh')).toBe('Acme 内部')
+    expect(sourceLabel(acme.label, 'ja')).toBe('Acme')
+    expect(sourceLabel({ zh: '只有中文' }, 'en')).toBe('只有中文')
+    expect(sourceLabel(undefined, 'en')).toBe('')
+  })
+
+  it('words each failure code, filling in the detail', () => {
+    const t = (key: string): string => ({ srcErrAuth: 'refused ({0})', srcErrNetwork: 'no connection' } as Record<string, string>)[key] ?? key
+    expect(sourceErrorText({ code: 'auth', detail: '401' }, t)).toBe('refused (401)')
+    expect(sourceErrorText({ code: 'network', detail: 'x' }, t)).toBe('no connection')
+    expect(sourceErrorText({ code: 'file', detail: '' }, t)).toBe('srcErrFile')
+    expect(sourceErrorText(undefined, t)).toBe('no connection')
+  })
+
+  it('offers a filter only over catalogs that loaded', () => {
+    const base = { id: 'x', kind: 'user' as const, label: {}, where: '', count: 1, skipped: 0, locked: false }
+    expect(loadedSources(null)).toEqual([])
+    expect(loadedSources({})).toEqual([])
+    expect(loadedSources({ sources: [{ ...base, id: 'a', status: 'ok' }, { ...base, id: 'b', status: 'failed' }, { ...base, id: 'c', status: 'off' }] }).map(s => s.id)).toEqual(['a'])
   })
 })

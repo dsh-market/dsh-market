@@ -8,6 +8,7 @@ import { IconCheckOutline16, IconChevronUpOutline14, IconWarningOutline16 } from
 import { SearchInput } from './SearchInput.tsx'
 import { installCommandFor, isInstalled, localizeBilingual, looksTerminal, pluginCategories, pluginName } from './market-data.ts'
 import { RecoveryPanel } from './RecoveryPanel.tsx'
+import { SourceTag } from './SourceParts.tsx'
 import { CommentsModal } from './CommentsModal.tsx'
 import { OwnerAvatar, ScreenshotStrip } from './MarketImages.tsx'
 import {
@@ -276,8 +277,9 @@ export function MarketDialogs({ c }: { c: MarketDialogsCtx }) {
               <span className={css.star} title={t('published')}>{`· ${confirming.added}`}</span>
             )}
           </div>
-          {pluginCategories(confirming).length > 0 && (
+          {(pluginCategories(confirming).length > 0 || confirming.source !== undefined) && (
             <div className={css.confirmTags}>
+              <SourceTag plugin={confirming} lang={lang} />
               {pluginCategories(confirming).map(category => (
                 <span key={category} className={css.tag}>
                   {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}

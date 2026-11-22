@@ -19,6 +19,9 @@
  * out that is not "wait for the next release".
  */
 
+import { getPolicy } from './policy.ts'
+
+
 /** A region the market can download from. */
 export type Region = 'global' | 'china'
 
@@ -257,9 +260,15 @@ export function setCustomGithubProxy(proxy: string | null): void {
   resetGithubRoutePreferences()
 }
 
+/** The policy's GitHub prefix, when it names a usable one. */
+function policyGithubProxy(): string | null {
+  const value = getPolicy().mirrors.githubProxy
+  return value === undefined ? null : normalizeGithubProxy(value)
+}
+
 /** Whether the operator-owned environment variable disables UI changes. */
 export function githubProxyManaged(env: NodeJS.ProcessEnv = process.env): boolean {
-  return override(env, 'DSHM_GITHUB_PROXY') !== null
+  return policyGithubProxy() !== null || override(env, 'DSHM_GITHUB_PROXY') !== null
 }
 
 /** Remember one verified route without changing other GitHub services. */
@@ -308,9 +317,12 @@ function withCustomProxy(proxy: string, base: GithubRoute[]): GithubRoute[] {
  */
 export function routesFor(region: Region, env: NodeJS.ProcessEnv = process.env): RegionRoutes {
   const base = ROUTES[region]
-  const npmMirror = override(env, 'DSHM_NPM_MIRROR')
-  const githubProxy = override(env, 'DSHM_GITHUB_PROXY') ?? customGithubProxy
-  const catalog = override(env, 'DSHM_REGISTRY_URL')
+  // An administrator's policy outranks the environment and the region: it is
+  // the one setting a user cannot be left to override (src/policy.ts).
+  const mirrors = getPolicy().mirrors
+  const npmMirror = mirrors.npm ?? override(env, 'DSHM_NPM_MIRROR')
+  const githubProxy = policyGithubProxy() ?? override(env, 'DSHM_GITHUB_PROXY') ?? customGithubProxy
+  const catalog = mirrors.catalog ?? override(env, 'DSHM_REGISTRY_URL')
   const registry = npmMirror ?? base.npmRegistry
   const githubRoutes: GithubRoutes = githubProxy === null
     ? {

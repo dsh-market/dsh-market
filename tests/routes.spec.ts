@@ -26,6 +26,8 @@ import { readMarketState, writeMarketState } from '../src/hot.ts'
 import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
 import * as orderApi from '../src/order.ts'
 import * as registryApi from '../src/registry.ts'
+import * as catalogsApi from '../src/catalogs.ts'
+import * as policyApi from '../src/policy.ts'
 import * as netApi from '../src/net.ts'
 import { DiscoveryManifestIndex } from '../src/discovery-compatibility.ts'
 import type { PluginCommandRuntime } from '../src/dsh-cli.ts'
@@ -1546,5 +1548,137 @@ describe('anonymous usage count route', () => {
     const del = await hit(routes, '/dsh-market/telemetry', { method: 'DELETE', url: '/dsh-market/telemetry' })
     expect(del.status).toBe(405)
     expect(del.headers.allow).toBe('GET, POST')
+  })
+})
+
+// --- catalogs: the settings list, add and remove ------------------------------
+
+describe('plugin catalogs routes', () => {
+  const PRIVATE = {
+    updated: '2026-09-01',
+    label: 'Acme',
+    plugins: [{ name: 'badge', url: 'https://repo.acme/badge', category: 'hr', npm: '@acme/badge', description: 'Badge' }],
+  }
+  const catalogFile = (name = 'plugins.json', doc: unknown = PRIVATE): string => {
+    const path = join(tmp, name)
+    writeFileSync(path, typeof doc === 'string' ? doc : JSON.stringify(doc))
+    return path
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.DSH_MARKET_POLICY
+    policyApi.resetPolicyCache()
+    catalogsApi.setUserCatalogs([])
+  })
+
+  const policy = (doc: unknown): void => {
+    const path = join(tmp, 'policy.json')
+    writeFileSync(path, JSON.stringify(doc))
+    process.env.DSH_MARKET_POLICY = path
+    policyApi.resetPolicyCache()
+  }
+
+  it('reports nothing to load and offers adding, for someone who configured nothing', async () => {
+    const registry = vi.spyOn(registryApi, 'loadRegistry')
+    const res = await hit(routes, '/dsh-market/catalogs', { method: 'GET', url: '/dsh-market/catalogs' })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res)).toMatchObject({ sources: [], userCatalogsAllowed: true, publicCatalog: { enabled: true, locked: false }, problems: [] })
+    // nothing is configured, so nothing is fetched just to draw the list
+    expect(registry).not.toHaveBeenCalled()
+  })
+
+  it('adds a catalog only after reading it once, saves it, and a second add of the same one is refused', async () => {
+    const file = catalogFile()
+    const added = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: file }))
+    expect(added.status).toBe(200)
+    expect(jsonBody(added)).toMatchObject({ ok: true, count: 1, label: { en: 'Acme' } })
+    expect(readMarketState(dir).userCatalogs).toEqual([{ id: expect.stringMatching(/^user-/), file }])
+    const again = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: file }))
+    expect(again.status).toBe(409)
+    expect(jsonBody(again).code).toBe('duplicate')
+    expect(readMarketState(dir).userCatalogs).toHaveLength(1)
+  })
+
+  it('saves nothing when the address cannot be read, and says why', async () => {
+    const missing = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: join(tmp, 'nope.json') }))
+    expect(missing.status).toBe(400)
+    expect(jsonBody(missing)).toMatchObject({ ok: false, code: 'unreadable', source: { code: 'file' } })
+    const junk = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: catalogFile('junk.json', 'not json') }))
+    expect(jsonBody(junk)).toMatchObject({ code: 'unreadable', source: { code: 'invalid' } })
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+  })
+
+  it('refuses addresses that are not an address, and web addresses that carry a password', async () => {
+    for (const [source, code] of [['', 'empty'], ['plugins.json', 'unrecognized'], ['https://u:p@x.example/p.json', 'credentials']] as const) {
+      const res = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source }))
+      expect(res.status).toBe(400)
+      expect(jsonBody(res).code).toBe(code)
+    }
+  })
+
+  it('stops at eight', async () => {
+    for (let index = 0; index < 8; index++) {
+      const res = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: catalogFile(`c${String(index)}.json`) }))
+      expect(res.status).toBe(200)
+    }
+    const ninth = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: catalogFile('c9.json') }))
+    expect(ninth.status).toBe(400)
+    expect(jsonBody(ninth)).toMatchObject({ code: 'limit', limit: 8 })
+  })
+
+  it('refuses adding while the organization forbids it', async () => {
+    policy({ userCatalogs: false })
+    const res = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: catalogFile() }))
+    expect(res.status).toBe(403)
+    expect(jsonBody(res).code).toBe('locked')
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+    const list = await hit(routes, '/dsh-market/catalogs', { method: 'GET', url: '/dsh-market/catalogs' })
+    expect(jsonBody(list).userCatalogsAllowed).toBe(false)
+  })
+
+  it('removes a saved catalog, refuses an unknown one, and cannot remove what the organization set', async () => {
+    const file = catalogFile()
+    await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: file }))
+    const id = readMarketState(dir).userCatalogs![0]!.id
+    expect((await hit(routes, '/dsh-market/catalogs/remove', post('/dsh-market/catalogs/remove', { id: 'acme' }))).status).toBe(404)
+    policy({ catalogs: [{ id: 'acme', label: 'Acme', file }] })
+    expect((await hit(routes, '/dsh-market/catalogs/remove', post('/dsh-market/catalogs/remove', { id: 'acme' }))).status).toBe(404)
+    const removed = await hit(routes, '/dsh-market/catalogs/remove', post('/dsh-market/catalogs/remove', { id }))
+    expect(removed.status).toBe(200)
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+  })
+
+  it('lists each source with how it answered, and never a header or a token', async () => {
+    policy({ catalogs: [{ id: 'acme', label: 'Acme', url: 'https://plugins.acme.internal/p.json?key=QUERYSECRET', headers: { Authorization: 'Bearer HEADERSECRET' } }] })
+    vi.spyOn(registryApi, 'loadRegistry').mockResolvedValue({
+      updated: 'x', count: 1, categories: {}, plugins: [],
+      sources: [
+        { id: 'public', kind: 'public', label: { en: 'Public' }, where: '', status: 'ok', count: 5, skipped: 0, locked: false },
+        { id: 'acme', kind: 'policy', label: { en: 'Acme' }, where: 'plugins.acme.internal/p.json', status: 'failed', count: 0, skipped: 0, locked: true, error: { code: 'auth', detail: '401' } },
+      ],
+    })
+    const res = await hit(routes, '/dsh-market/catalogs', { method: 'GET', url: '/dsh-market/catalogs' })
+    expect(res.body).not.toContain('HEADERSECRET')
+    expect(res.body).not.toContain('QUERYSECRET')
+    expect((jsonBody(res).sources as Array<{ id: string }>).map(source => source.id)).toEqual(['public', 'acme'])
+  })
+
+  it('refuses cross-origin writes and the wrong method', async () => {
+    const cross = await hit(routes, '/dsh-market/catalogs/add', { method: 'POST', url: '/x', origin: 'http://evil.example', host: HOST, body: { source: catalogFile() } })
+    expect(cross.status).toBe(403)
+    expect((await hit(routes, '/dsh-market/catalogs/add', { method: 'GET', url: '/x' })).status).toBe(405)
+    expect((await hit(routes, '/dsh-market/catalogs/remove', { method: 'GET', url: '/x' })).status).toBe(405)
+    expect((await hit(routes, '/dsh-market/catalogs', { method: 'POST', url: '/x' })).status).toBe(405)
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+  })
+
+  it('answers a failed catalog load with the per-source reasons', async () => {
+    vi.spyOn(registryApi, 'loadRegistry').mockRejectedValue(new registryApi.CatalogLoadError('offline', [
+      { id: 'public', kind: 'public', label: { en: 'Public' }, where: '', status: 'failed', count: 0, skipped: 0, locked: false, error: { code: 'network', detail: 'x' } },
+    ]))
+    const res = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry' })
+    expect(res.status).toBe(502)
+    expect(jsonBody(res)).toMatchObject({ error: 'offline', sources: [{ id: 'public', status: 'failed' }] })
   })
 })

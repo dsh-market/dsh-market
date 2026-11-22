@@ -26,6 +26,7 @@ import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { findDshInstallDir } from './dsh-install.ts'
 import { logEvent } from './log.ts'
+import { MAX_USER_CATALOGS, validUserCatalog, type UserCatalog } from './catalogs.ts'
 import { bundlePatchTargets, declaredBundlePatchFiles, entryArtifactExists } from './profile.ts'
 
 interface HotRow {
@@ -405,6 +406,14 @@ export interface MarketState {
    */
   favorites?: string[]
   /**
+   * Extra catalogs the user added in the settings card: a URL or an absolute
+   * file path each, nothing secret. Optional on the way in like `favorites`
+   * (omitted means "the caller has nothing to say"); an explicit empty list
+   * is how the last one is removed. Ignored while the policy sets
+   * `userCatalogs: false`.
+   */
+  userCatalogs?: UserCatalog[]
+  /**
    * Package names the user hid from Discover and Themes (#657).
    *
    * Local, per-profile, reversible. The Hidden tab lists the same names so
@@ -595,6 +604,18 @@ function favoriteUrls(value: unknown): string[] {
   return uniqueStrings(value).filter(url => url.startsWith('http://') || url.startsWith('https://'))
 }
 
+/** Saved user catalogs: well-formed, de-duplicated, capped; stored state is untrusted. */
+function userCatalogsFromUnknown(value: unknown): UserCatalog[] {
+  if (!Array.isArray(value)) return []
+  const out: UserCatalog[] = []
+  for (const raw of value) {
+    const entry = validUserCatalog(raw)
+    if (entry !== null && !out.some(other => other.id === entry.id)) out.push(entry)
+    if (out.length >= MAX_USER_CATALOGS) break
+  }
+  return out
+}
+
 /** Package names, non-empty, order preserved, capped. */
 function cappedPackageNames(value: unknown, cap: number): string[] {
   const trimmed = Array.isArray(value)
@@ -732,6 +753,7 @@ export function readMarketState(profileDir: string): MarketState {
       buildEnv?: unknown
       notes?: unknown
       favorites?: unknown
+      userCatalogs?: unknown
       blocked?: unknown
       updateExempt?: unknown
       backgroundUpdateChecks?: unknown
@@ -758,6 +780,7 @@ export function readMarketState(profileDir: string): MarketState {
       }
     }
     const githubProxy = normalizeGithubProxy(state.githubProxy)
+    const userCatalogs = userCatalogsFromUnknown(state.userCatalogs)
     const brokenPlugins = brokenPluginsFromUnknown(state.brokenPlugins)
     const installTimes = installTimesFromUnknown(state.installTimes)
     // The order and the map are two halves of one fact, and a state file can
@@ -786,6 +809,7 @@ export function readMarketState(profileDir: string): MarketState {
       ...(typeof state.backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks: state.backgroundUpdateChecks } : {}),
       ...(isUpdateCheckIntervalHours(state.backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours: state.backgroundUpdateIntervalHours } : {}),
       ...(githubProxy === null ? {} : { githubProxy }),
+      ...(userCatalogs.length === 0 ? {} : { userCatalogs }),
       ...(brokenPlugins === undefined ? {} : { brokenPlugins }),
       ...(installTimes === undefined ? {} : { installTimes }),
       // true AND false are both preserved: on a host with no settings page
@@ -892,6 +916,7 @@ function writeState(profileDir: string, state: MarketState, ownStamps: boolean):
     ? state.regionAuto
     : onDisk.regionAuto
   const favorites = state.favorites ?? onDisk.favorites ?? []
+  const userCatalogs = state.userCatalogs ?? onDisk.userCatalogs ?? []
   const blocked = state.blocked ?? onDisk.blocked ?? []
   const updateExempt = state.updateExempt ?? onDisk.updateExempt ?? []
   const backgroundUpdateChecks = state.backgroundUpdateChecks ?? onDisk.backgroundUpdateChecks
@@ -923,6 +948,7 @@ function writeState(profileDir: string, state: MarketState, ownStamps: boolean):
     groups: state.groups,
     groupOrder: state.groupOrder,
     ...(favorites.length > 0 ? { favorites } : {}),
+    ...(userCatalogs.length > 0 ? { userCatalogs } : {}),
     ...(blocked.length > 0 ? { blocked } : {}),
     ...(updateExempt.length > 0 ? { updateExempt } : {}),
     ...(typeof backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks } : {}),

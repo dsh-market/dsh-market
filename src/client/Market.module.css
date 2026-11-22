@@ -1496,3 +1496,15 @@
 .fpDialogHead{display:flex;align-items:center;justify-content:space-between;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px}
 .fpClose{border:0;background:none;font:inherit;font-size:20px;line-height:1;cursor:pointer;color:var(--dsw-alias-label-tertiary,#8b93a1);padding:2px 6px;border-radius:6px}
 .fpClose:hover{background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}
+
+/* Catalogs beyond the public one: the tag on a card, the filter, the notice. */
+.srcTag{border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:var(--dsw-alias-brand-primary,#4f6ef7)}
+.srcFilter{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px}
+.srcProblems{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:6px 4px;padding:8px 10px;border:.5px solid var(--dsw-alias-state-error-primary,#dc2626);border-radius:8px;color:var(--dsw-alias-label-primary,#1f2328);font-size:12px;line-height:18px}
+.srcProblem{min-width:0;word-break:break-word}
+.setCatalogList{display:flex;flex-direction:column;gap:2px;padding:2px 0 6px}
+.setCatalogRow{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px;font-size:12px;line-height:18px}
+.setCatalogName{min-width:0;display:flex;flex-direction:column}
+.setCatalogMeta{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;line-height:16px;word-break:break-all}
+.setCatalogErr{color:var(--dsw-alias-state-error-primary,#dc2626);font-size:11px;line-height:16px}
+.setCatalogLock{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;white-space:nowrap}

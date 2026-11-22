@@ -1,5 +1,6 @@
 import { api, hostCompatibilityKey, type HostCompatibility, type HostCompatibilityMap, type Registry, type RegistryPlugin } from './market-data.ts'
 import { isExactReleaseVersion } from '../release-candidates.ts'
+import { noteSources } from './source-status.ts'
 
 const BATCH_SIZE = 64
 // The route accepts up to 32 KiB. Versions and revisions repeat their keys.
@@ -188,8 +189,12 @@ export class DiscoveryScan {
       registry?: Registry
       hostVersion?: Snapshot['hostVersion']
       error?: string
+      sources?: Registry['sources']
     }
     if (request !== this.catalogRequest) return 'superseded'
+    // Which catalogs failed, whether or not something else loaded: the page
+    // says so by name instead of showing a smaller list with no explanation.
+    noteSources(body.registry?.sources ?? body.sources)
     if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`)
     if (body.registry === undefined) throw new Error('the catalog response carried no data')
     const host = body.hostVersion

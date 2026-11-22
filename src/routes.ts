@@ -18,7 +18,11 @@ import type { FiberState } from '@deepseek-ai/cordis'
 import { load as loadYaml } from 'js-yaml'
 import { packageFileFromRegistry } from './catalog-npm.ts'
 import { aiSearch, FindPluginError, resultFor } from './find-plugin.ts'
-import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
+import { CatalogLoadError, forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
+import {
+  catalogConfig, entryAllowed, MAX_USER_CATALOGS, parseCatalogInput, probeCatalog, setUserCatalogs, userCatalogId, type SourceInfo,
+} from './catalogs.ts'
+import { getPolicy } from './policy.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
   buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts,
@@ -756,6 +760,7 @@ export function mountMarketRoutes(
   // group, install and uninstall mutates this shared state and persists it.
   const marketState = readMarketState(activeProfileDir)
   setCustomGithubProxy(marketState.githubProxy ?? null)
+  setUserCatalogs(marketState.userCatalogs ?? [])
   const disabled = marketState.disabled
   /**
    * The saved answer to "which doors into the market are open" (#1015).
@@ -887,6 +892,8 @@ export function mountMarketRoutes(
     updateNotifications.setEnabled(fresh.backgroundUpdateChecks === true)
     updateNotifications.setIntervalHours(fresh.backgroundUpdateIntervalHours ?? DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
     marketState.githubProxy = fresh.githubProxy
+    marketState.userCatalogs = fresh.userCatalogs
+    setUserCatalogs(fresh.userCatalogs ?? [])
     // A restore or an external writer can change these two too; a stale copy
     // here would put the old answer back on the next whole-state save (#435).
     marketState.settingsSection = fresh.settingsSection
@@ -4200,7 +4207,11 @@ export function mountMarketRoutes(
             // reachable one with fewer plugins in it.
             const message = error instanceof Error ? error.message : String(error)
             logEvent('warn', 'registry', `catalog fetch failed: ${message}`)
-            sendJson(response, 502, { error: message })
+            sendJson(response, 502, {
+              error: message,
+              // Which source said what, so the page can name the one to fix.
+              ...(error instanceof CatalogLoadError ? { sources: error.sources } : {}),
+            })
           }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -5156,6 +5167,137 @@ export function mountMarketRoutes(
             writeMarketState(activeProfileDir, { ...state, notes })
             refreshMarketState()
             sendJson(response, 200, { ok: true, notes })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * The catalogs list in Settings: what is configured and how each source
+     * answered the last read. Never carries a header, a token or a query string.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/catalogs',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const config = catalogConfig()
+          let sources: SourceInfo[] = []
+          if (config.active) {
+            // Reading also refreshes each source's status; a total failure
+            // still carries the per-source answers.
+            sources = await loadRegistry().then(registry => registry.sources ?? [], (error: unknown) => (error instanceof CatalogLoadError ? error.sources : []))
+          }
+          sendJson(response, 200, {
+            sources,
+            publicCatalog: { enabled: config.publicEnabled, locked: config.policy.publicCatalog === false },
+            userCatalogsAllowed: config.policy.userCatalogs,
+            limit: MAX_USER_CATALOGS,
+            problems: config.policy.problems,
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * Add a catalog of the user's own: one URL or absolute file path, read
+     * once to prove it is a catalog, then saved. Refused wholesale while the
+     * organization's policy says users may not add catalogs.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/catalogs/add',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            if (!getPolicy().userCatalogs) {
+              sendJson(response, 403, { ok: false, code: 'locked', error: '你的组织不允许添加目录 / your organization does not allow adding catalogs' })
+              return
+            }
+            const body = (await readJsonBody(request)) as { source?: unknown } | null
+            const parsed = parseCatalogInput(typeof body?.source === 'string' ? body.source : '')
+            if ('error' in parsed) {
+              sendJson(response, 400, { ok: false, code: parsed.error, error: `invalid catalog address (${parsed.error}) / 目录地址不对` })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const saved = [...(state.userCatalogs ?? [])]
+            const id = userCatalogId(parsed)
+            if (saved.some(entry => entry.id === id) || catalogConfig().extras.some(source => source.id === id)) {
+              sendJson(response, 409, { ok: false, code: 'duplicate', error: 'this catalog is already added / 这个目录已经添加过了' })
+              return
+            }
+            if (saved.length >= MAX_USER_CATALOGS) {
+              sendJson(response, 400, { ok: false, code: 'limit', limit: MAX_USER_CATALOGS, error: `at most ${String(MAX_USER_CATALOGS)} catalogs / 最多添加 ${String(MAX_USER_CATALOGS)} 个目录` })
+              return
+            }
+            // Read it once before keeping it: what is saved is known to work.
+            const probe = await probeCatalog(parsed)
+            if (probe.registry === null) {
+              sendJson(response, 400, { ok: false, code: 'unreadable', source: probe.info.error, error: `could not read the catalog (${probe.info.error?.code ?? 'unknown'}) / 读不了这个目录` })
+              return
+            }
+            writeMarketState(activeProfileDir, { ...readMarketState(activeProfileDir), userCatalogs: [...saved, { id, ...parsed }] })
+            refreshMarketState()
+            forgetCatalog()
+            invalidateUpdates()
+            logEvent('info', 'catalog', `added catalog ${id} (${probe.info.where}), ${String(probe.info.count)} plugins`)
+            sendJson(response, 200, { ok: true, id, count: probe.info.count, label: probe.info.label })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/catalogs/remove',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            const body = (await readJsonBody(request)) as { id?: unknown } | null
+            const id = typeof body?.id === 'string' ? body.id : ''
+            const state = readMarketState(activeProfileDir)
+            const saved = state.userCatalogs ?? []
+            // A catalog the organization set is not the user's to remove.
+            if (!saved.some(entry => entry.id === id)) {
+              sendJson(response, 404, { ok: false, error: 'no such catalog / 没有这个目录' })
+              return
+            }
+            writeMarketState(activeProfileDir, { ...state, userCatalogs: saved.filter(entry => entry.id !== id) })
+            refreshMarketState()
+            forgetCatalog()
+            invalidateUpdates()
+            logEvent('info', 'catalog', `removed catalog ${id}`)
+            sendJson(response, 200, { ok: true })
           })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -8799,6 +8941,14 @@ export function mountMarketRoutes(
             if (entry === undefined) {
               logEvent('warn', 'install-rejected', `not in curated registry: ${url.slice(0, 120)}`)
               sendJson(response, 400, { error: 'plugin is not in the curated registry' })
+              return
+            }
+            // The list above is already narrowed by the policy's `allow`; asked
+            // again here so this route does not depend on that happening
+            // upstream (the check that matters is the one next to the install).
+            if (!entryAllowed(entry, getPolicy().allow)) {
+              logEvent('warn', 'install-rejected', `not allowed by policy: ${entry.name}`)
+              sendJson(response, 403, { error: '你的组织不允许安装这个插件 / your organization does not allow installing this plugin' })
               return
             }
             const plainTarget = installTargetFor(entry)

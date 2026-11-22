@@ -8,9 +8,13 @@
  * build-script approval still has to produce the key it produced before.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { resetPolicyCache } from '../src/policy.ts'
 import {
-  activeRegion, asRegion, catalogSourcesFor, DEFAULT_NPM_REGISTRY, githubRoutesFor, REGIONS, rememberGithubRoute,
+  activeRegion, asRegion, catalogSourcesFor, DEFAULT_NPM_REGISTRY, githubProxyManaged, githubRoutesFor, REGIONS, rememberGithubRoute,
   resetGithubRoutePreferences, routesFor, setActiveRegion, setCustomGithubProxy, throughProxy,
 } from '../src/regions.ts'
 import { codeloadAllowBuildsKey, codeloadTarball, githubCommitOfTarget, gitAllowBuildsKey, githubRepoOfRemote, pinnedAllowBuildsKeys, pinnedGitAllowBuildsKey, repoOfTarget } from '../src/sources.ts'
@@ -482,5 +486,51 @@ describe('allowBuilds keys off GitHub (#637 follow-up)', () => {
       .toBe(`p@https://codeload.github.com/o/r/tar.gz/${SHA}`)
     expect(pinnedGitAllowBuildsKey('p', 'bitbucket:o/r', 'main')).toBeNull()
     expect(pinnedGitAllowBuildsKey('p', 'themer', SHA)).toBeNull()
+  })
+})
+
+describe('mirrors set by an organization policy', () => {
+  let dir: string
+  const withPolicy = (doc: unknown): void => {
+    dir = mkdtempSync(join(tmpdir(), 'dshm-regions-policy-'))
+    const file = join(dir, 'policy.json')
+    writeFileSync(file, JSON.stringify(doc))
+    vi.stubEnv('DSH_MARKET_POLICY', file)
+    resetPolicyCache()
+  }
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    resetPolicyCache()
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('changes nothing when there is no policy', () => {
+    expect(routesFor('global').npmRegistry).toBe(DEFAULT_NPM_REGISTRY)
+    expect(routesFor('global').catalog).toEqual([{ kind: 'url', url: 'https://awesome-dsh-plugin.com/plugins.json' }])
+  })
+
+  it('routes npm and the catalog where the policy says, over the region and over the environment', () => {
+    withPolicy({ mirrors: { npm: 'https://npm.acme.internal/', catalog: 'https://c.acme.internal/plugins.json' } })
+    const env = { DSHM_NPM_MIRROR: 'https://env.example', DSHM_REGISTRY_URL: 'https://env.example/p.json' }
+    for (const region of REGIONS) {
+      const routes = routesFor(region, env)
+      expect(routes.npmRegistry).toBe('https://npm.acme.internal')
+      expect(routes.catalog).toEqual([{ kind: 'url', url: 'https://c.acme.internal/plugins.json' }])
+    }
+  })
+
+  it('takes the GitHub prefix from the policy, and then the user cannot change it', () => {
+    withPolicy({ mirrors: { githubProxy: 'https://gh.acme.internal/proxy/' } })
+    setCustomGithubProxy('https://mine.example')
+    expect(routesFor('global').githubProxy).toBe('https://gh.acme.internal/proxy')
+    expect(routesFor('global').githubRoutes.raw[0]).toBe('https://gh.acme.internal/proxy')
+    expect(githubProxyManaged()).toBe(true)
+  })
+
+  it('leaves the user\'s own GitHub prefix alone when the policy names none', () => {
+    withPolicy({ publicCatalog: true })
+    setCustomGithubProxy('https://mine.example')
+    expect(routesFor('global').githubProxy).toBe('https://mine.example')
+    expect(githubProxyManaged({})).toBe(false)
   })
 })

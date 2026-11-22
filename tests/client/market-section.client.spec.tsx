@@ -13942,3 +13942,103 @@ describe('compact header, detail view and quiet notes', () => {
     })
   })
 })
+
+describe('catalogs beyond the public one', () => {
+  const PRIVATE = {
+    name: 'badge', owner: '', url: 'https://repo.acme.internal/tools/badge', category: 'hr', npm: '@acme/badge', added: '2026-08-12',
+    description: { en: 'Show a badge' }, install: '@acme/badge',
+    source: { id: 'acme', label: { en: 'Acme internal', zh: 'Acme 内部' } },
+  }
+  const SOURCES = [
+    { id: 'public', kind: 'public', label: { en: 'Public catalog' }, where: '', status: 'ok', count: 3, skipped: 0, locked: false },
+    { id: 'acme', kind: 'policy', label: { en: 'Acme internal', zh: 'Acme 内部' }, where: 'plugins.acme.internal', status: 'ok', count: 1, skipped: 0, locked: true },
+  ]
+  const MERGED = {
+    ...REGISTRY, count: 4, categories: { ...REGISTRY.categories, hr: { en: 'People', zh: '人事' } },
+    plugins: [PRIVATE, ...REGISTRY.plugins], sources: SOURCES,
+  }
+  const serve = (registry: unknown, extra: Record<string, unknown> = {}) => stubFetch({
+    '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' },
+    ...extra,
+  })
+
+  it('tags an entry that came from an added catalog, and only that one', async () => {
+    serve(MERGED)
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    // The tag sits with the category tags; the public cards have none of it.
+    const tags = [...document.querySelectorAll(`.${css.srcTag}`)].map(node => node.textContent)
+    expect(tags).toEqual(['Acme internal'])
+  })
+
+  it('does not put the GitHub mark beside an entry that does not link to GitHub', async () => {
+    serve(MERGED)
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    expect(screen.queryByRole('link', { name: new RegExp(`^badge — ${en.repoLink}`) })).toBeNull()
+    expect(screen.getByRole('link', { name: new RegExp(`^dsh-notify — ${en.repoLink}`) })).toBeTruthy()
+  })
+
+  it('offers a source filter when two catalogs loaded, and narrows the list with it', async () => {
+    serve(MERGED)
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    const group = screen.getByRole('group', { name: en.srcFilterLabel })
+    fireEvent.click(within(group).getByRole('button', { name: 'Acme internal' }))
+    await waitFor(() => { expect(screen.queryAllByRole('button', { name: 'dsh-notify' })).toHaveLength(0) })
+    expect(screen.getAllByRole('button', { name: 'badge' }).length).toBeGreaterThan(0)
+    fireEvent.click(within(group).getByRole('button', { name: 'Public catalog' }))
+    await screen.findAllByRole('button', { name: 'dsh-notify' })
+    expect(screen.queryAllByRole('button', { name: 'badge' })).toHaveLength(0)
+    fireEvent.click(within(group).getByRole('button', { name: en.srcAll }))
+    await screen.findAllByRole('button', { name: 'badge' })
+  })
+
+  it('shows no filter, no tag and no notice to someone who uses only the public catalog', async () => {
+    serve(REGISTRY)
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'dsh-notify' })
+    expect(screen.queryByRole('group', { name: en.srcFilterLabel })).toBeNull()
+    expect(document.querySelector(`.${css.srcTag}`)).toBeNull()
+    expect(document.querySelector(`.${css.srcProblems}`)).toBeNull()
+  })
+
+  it('shows no filter when only one catalog loaded', async () => {
+    serve({ ...MERGED, sources: [SOURCES[0], { ...SOURCES[1], status: 'failed', count: 0, error: { code: 'auth', detail: '401' } }], plugins: REGISTRY.plugins })
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'dsh-notify' })
+    expect(screen.queryByRole('group', { name: en.srcFilterLabel })).toBeNull()
+  })
+
+  it('names the catalog that could not be read, says what to do, and retries', async () => {
+    const failing = { ...MERGED, plugins: REGISTRY.plugins, sources: [SOURCES[0], { ...SOURCES[1], status: 'failed', count: 0, error: { code: 'auth', detail: '401' } }] }
+    serve(failing)
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'dsh-notify' })
+    const notice = document.querySelector(`.${css.srcProblems}`) as HTMLElement
+    expect(notice.textContent).toContain('Acme internal')
+    expect(notice.textContent).toContain(en.srcFailed)
+    expect(notice.textContent).toContain(en.srcErrAuth.replace('{0}', '401'))
+    const before = fetchCalls.filter(call => call.path === '/dsh-market/registry').length
+    fireEvent.click(within(notice).getByRole('button', { name: en.loadRetry }))
+    await waitFor(() => { expect(fetchCalls.filter(call => call.path === '/dsh-market/registry').length).toBeGreaterThan(before) })
+  })
+
+  it('names every catalog, instead of a joined diagnostic, when nothing loaded', async () => {
+    stubFetch({
+      '/dsh-market/registry': {
+        error: 'public: network · acme: file', __status: 502,
+        sources: [
+          { id: 'public', kind: 'public', label: { en: 'Public catalog' }, where: '', status: 'failed', count: 0, skipped: 0, locked: false, error: { code: 'network', detail: 'x' } },
+          { id: 'acme', kind: 'policy', label: { en: 'Acme internal' }, where: '/opt/acme/plugins.json', status: 'failed', count: 0, skipped: 0, locked: true, error: { code: 'file', detail: 'not found' } },
+        ],
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText(en.loadFail)
+    const notice = document.querySelector(`.${css.srcProblems}`) as HTMLElement
+    expect(notice.textContent).toContain('Public catalog')
+    expect(notice.textContent).toContain(en.srcErrFile)
+    expect(screen.queryByText('public: network · acme: file')).toBeNull()
+  })
+})

@@ -730,3 +730,61 @@ describe('install times survive a stale whole-state save (#1142)', () => {
     }
   })
 })
+
+describe('market state.json — the user\'s own catalogs', () => {
+  const url = 'https://plugins.example.com/plugins.json'
+  const file = '/opt/acme/plugins.json'
+
+  it('is absent until the user adds a catalog, so an untouched profile reads exactly as before', () => {
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [] })
+      expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+      expect(readRaw(dir)).not.toHaveProperty('userCatalogs')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('persists catalogs as a URL or a file path each, and drops junk and duplicates on read', () => {
+    const dir = stateDir()
+    try {
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+        userCatalogs: [
+          { url }, { url }, { file },
+          { file: 'relative.json' }, { url: 'javascript:alert(1)' }, { url, file }, 'text', null,
+        ],
+      }))
+      const read = readMarketState(dir).userCatalogs!
+      expect(read.map(entry => entry.url ?? entry.file)).toEqual([url, file])
+      expect(read[0]!.id).toMatch(/^user-[0-9a-f]{8}$/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('survives a partial write, and an explicit empty list removes the last one', () => {
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], userCatalogs: [{ id: 'x', url }] })
+      writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [] })
+      expect(readMarketState(dir).userCatalogs).toHaveLength(1)
+      writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [], userCatalogs: [] })
+      expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps at most eight', () => {
+    const dir = stateDir()
+    try {
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+        userCatalogs: Array.from({ length: 12 }, (_, index) => ({ url: `https://c${String(index)}.example/p.json` })),
+      }))
+      expect(readMarketState(dir).userCatalogs).toHaveLength(8)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
