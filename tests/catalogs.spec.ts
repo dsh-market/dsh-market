@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 /**
  * Catalog sources beyond the public one: merging, the allowlist, reading a
  * file or URL, failure per source, and what never leaks.
@@ -161,7 +162,7 @@ describe('adding a catalog by hand', () => {
   it('reads a URL, a file path, a file: URL and a ~ path, and refuses the rest', () => {
     expect(parseCatalogInput(' https://plugins.acme.internal/plugins.json ')).toEqual({ url: 'https://plugins.acme.internal/plugins.json' })
     expect(parseCatalogInput('/opt/acme/plugins.json')).toEqual({ file: '/opt/acme/plugins.json' })
-    expect(parseCatalogInput('file:///opt/acme/plugins.json')).toEqual({ file: '/opt/acme/plugins.json' })
+    expect(parseCatalogInput('file:///opt/acme/plugins.json')).toEqual({ file: fileURLToPath('file:///opt/acme/plugins.json') })
     expect(parseCatalogInput('~/plugins.json')).toMatchObject({ file: expect.stringMatching(/\/plugins\.json$/) })
     expect(parseCatalogInput('')).toEqual({ error: 'empty' })
     expect(parseCatalogInput('plugins.json')).toEqual({ error: 'unrecognized' })

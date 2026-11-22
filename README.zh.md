@@ -244,6 +244,13 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 配置方法、`policy.json` 完整说明和示例见 [ENTERPRISE.zh.md](ENTERPRISE.zh.md)。
 
+<details>
+<summary>给市场面板做主题（主题作者）</summary>
+
+市场面板的每个颜色都取自宿主的 `--dsw-alias-*` 设计令牌，所以主题只要覆写令牌就能给它换肤——不需要、也不可能用选择器去补面板 DOM：面板的类名是构建哈希。[THEMING.md](THEMING.md) 列出面板及其引入的原语消费的全部令牌、稳定的数据属性挂点（`data-dsh-market-root`、`[data-dshm-stuck]`、壁纸主题需要遵守的 `--dshm-sticky-bg` 约定）和一个完整示例。主题的令牌清单没覆盖全时，缺口会最先在市场面板里显形——tab 胶囊行和选中 pill 保持原生配色，是主题侧的令牌缺口，不是市场的 bug。
+
+</details>
+
 ## 友情链接
 
 ### DSH Desktop（dataelement）
