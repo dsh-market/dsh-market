@@ -17,7 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { FiberState } from '@deepseek-ai/cordis'
 import { load as loadYaml } from 'js-yaml'
 import { packageFileFromRegistry } from './catalog-npm.ts'
-import { aiSearch, FindPluginError, resultFor } from './find-plugin.ts'
+import { aiRecommend, aiSearch, FindPluginError, resultFor, setUserPluginsReader, setUsesMyPlugins, usesMyPlugins } from './find-plugin.ts'
 import { CatalogLoadError, forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import {
   catalogConfig, entryAllowed, MAX_USER_CATALOGS, parseCatalogInput, probeCatalog, setUserCatalogs, userCatalogId, type SourceInfo,
@@ -607,6 +607,11 @@ export function mountMarketRoutes(
     throw new Error(message)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  // AI search and /find-plugin read these only after the user allowed it.
+  setUserPluginsReader(() => ({
+    installed: Object.keys(readInstalled(config.profile, activeProfileDir)),
+    favorites: readMarketState(activeProfileDir).favorites ?? [],
+  }))
   // #987: a remove that died between deleting the package and clearing the
   // rows its bundle patch declares leaves an insert naming a missing module —
   // and DSH's boot is all-or-nothing, so that row can keep the host from
@@ -1004,21 +1009,60 @@ export function mountMarketRoutes(
     if (await themes.setEntryDisabled(name, true)) logEvent('info', 'boot', `plugin kept off: ${name}`)
   }
 
+  /**
+   * The boot pass: shim-mount client-only packages, then put the persisted
+   * disable list back down.
+   *
+   * It is started from the `ctx.inject(['webServer','loader'], …)` callback,
+   * so it runs on that callback's context — and it keeps running after the
+   * callback returns. The host re-provisions services while it boots, and
+   * cordis refreshes EVERY fiber that injects a re-provided name: that
+   * disposes this context and re-runs `apply` on a fresh one, while the work
+   * started here is still going against the disposed copy. Reading
+   * `host.loader` there throws `cannot get required service "loader" in
+   * inactive context` — including from `includePrefix`, whose only job is to
+   * strip a row-id prefix (#1277).
+   *
+   * Nothing awaits this pass, so the throw left as a rejection nobody
+   * handled, and the host turned that into `fatal load failure`: on a profile
+   * whose disable list was non-empty the app came up empty — no sessions, no
+   * workspace, "settings could not be read, saving paused" — while the
+   * profile on disk was untouched. The list is what decides whether the pass
+   * runs at all, which is why an empty one never showed this.
+   *
+   * Catching here is not bookkeeping. The instance that replaced this one
+   * reads the same state and replays the same list, so the stale pass has
+   * nothing left to do — and if nothing replaced it, the next boot replays.
+   * Whatever else a replay can throw, one package's boot work must never be
+   * able to take the host down with it.
+   */
+  async function replayBootDisables(): Promise<void> {
+    // Named in the log line, so a reader knows which step stopped rather than
+    // being told "boot failed" and nothing else.
+    let stage = 'mounting client-only shims'
+    try {
+      const mounted = await mountClientOnlyDeps(host, activeProfileDir)
+      if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
+      // Replay the persisted disable list: bundle-layer plugins the user
+      // switched away from get live-disabled again (bundle trees are
+      // in-memory, so the disable never persists on its own). Client-only
+      // shims for disabled plugins were already skipped by mountClientOnlyDeps.
+      for (const name of [...disabled]) {
+        stage = `replaying ${name}`
+        if (followOutsideEnable(name)) continue
+        noteHomeLayerConflict(name)
+        await replayDisabledPackage(name)
+      }
+    } catch (error) {
+      logEvent('warn', 'boot',
+        `boot replay stopped while ${stage}: ${error instanceof Error ? error.message : String(error)}. The disable list on disk is unchanged, so the next boot applies it again — and so does the market instance that replaces this one when the host rebuilt it mid-boot; a package this pass had not reached yet stays on until then (#1277)`)
+    }
+  }
+
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
   // bundles are actually served.
-  void mountClientOnlyDeps(host, activeProfileDir).then(async (mounted) => {
-    if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
-    // Replay the persisted disable list: bundle-layer plugins the user
-    // switched away from get live-disabled again (bundle trees are
-    // in-memory, so the disable never persists on its own). Client-only
-    // shims for disabled plugins were already skipped by mountClientOnlyDeps.
-    for (const name of [...disabled]) {
-      if (followOutsideEnable(name)) continue
-      noteHomeLayerConflict(name)
-      await replayDisabledPackage(name)
-    }
-  })
+  void replayBootDisables()
 
   // Self-healing guard: dsh's own patch overlay can re-update entries during
   // activation and wipe the runtime disabled flag — whenever a fiber comes
@@ -4181,6 +4225,75 @@ export function mountMarketRoutes(
         } catch (error) {
           if (error instanceof FindPluginError) {
             sendJson(response, error.code === 'no-model' ? 409 : 502, { code: error.code, error: error.message })
+            return
+          }
+          sendJson(response, 500, { code: 'model-failed', error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      // The user's say-so for AI search and /find-plugin to read their
+      // installed and favorited plugins. GET reads it, POST {on} sets it.
+      path: '/dsh-market/ai-use-my-plugins',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { on: usesMyPlugins() })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { on?: unknown } | null
+        if (typeof body?.on !== 'boolean') {
+          sendJson(response, 400, { error: 'on must be true or false' })
+          return
+        }
+        try {
+          setUsesMyPlugins(body.on)
+          sendJson(response, 200, { on: body.on })
+        } catch (error) {
+          sendJson(response, 500, { error: `没能保存这个设置（${error instanceof Error ? error.message : String(error)}）。请重试。 / Could not save this setting. Try again.` })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      // "Recommend for me": the user's installed and favorited plugins, judged
+      // by their default model. Only on a click (it reads both lists and spends
+      // the user's tokens); nothing here runs by itself.
+      path: '/dsh-market/ai-recommend',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { exclude?: unknown; lang?: unknown } | null
+        const exclude = Array.isArray(body?.exclude) ? body.exclude.filter((name): name is string => typeof name === 'string').slice(0, 200) : []
+        try {
+          const result = await aiRecommend({
+            installed: Object.keys(readInstalled(config.profile, activeProfileDir)),
+            favorites: readMarketState(activeProfileDir).favorites ?? [],
+            exclude,
+            preferZh: body?.lang !== 'en' && body?.lang !== 'ja',
+          }, () => loadRegistry())
+          sendJson(response, 200, { result })
+        } catch (error) {
+          if (error instanceof FindPluginError) {
+            sendJson(response, error.code === 'no-model' || error.code === 'no-seeds' ? 409 : 502, { code: error.code, error: error.message })
             return
           }
           sendJson(response, 500, { code: 'model-failed', error: error instanceof Error ? error.message : String(error) })

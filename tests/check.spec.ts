@@ -1507,6 +1507,31 @@ describe('in-box bundles that cannot be located (#369)', () => {
     expect(report.summary.ok).toBe(true)
   })
 
+  it('does not judge an official bundle by a copy pnpm laid into the profile as a peer (#1281)', () => {
+    // dsh-computer-use-win peers on @deepseek-ai/dsh-mcp-client, so pnpm puts
+    // the npm copy (no dsh.bundle.patch) in the profile's node_modules. The
+    // host loads its own copy from the hidden installation; this one is a
+    // shadow, and calling it "will fail to boot" rolled back every update.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: { 'dsh-computer-use-win': '0.6.1' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-mcp-client'] } },
+    })
+    writePackage(dir, '@deepseek-ai/dsh-mcp-client', {
+      name: '@deepseek-ai/dsh-mcp-client',
+      version: '0.2.2-rc.5',
+      exports: { '.': './lib/index.js' },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+    const mcp = report.bundles.find(layer => layer.name === '@deepseek-ai/dsh-mcp-client')
+
+    expect(mcp).toMatchObject({ directory: null, error: null, unresolvedInbox: true })
+    expect(report.summary.errors.join('\n')).not.toMatch(/declares no dsh\.bundle\.patch/)
+    expect(report.summary.ok).toBe(true)
+  })
+
   it('uses the healed parent fallback behind a stale direct in-box shadow', () => {
     const dir = pdir('profiles/web')
     writeProfile(dir, {

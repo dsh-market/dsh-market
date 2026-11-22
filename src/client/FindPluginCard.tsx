@@ -37,6 +37,9 @@ export interface FindResult {
   intro: string
   picks: FindPick[]
   model: string
+  at?: string
+  /** The user's installed and favorited plugins informed the picks (they allowed it). */
+  personalized?: boolean
 }
 
 /** The command node as the chat hands it over (only the fields read here). */
@@ -137,6 +140,38 @@ function PickCard({ pick, index, t, navigation, onOpen }: { pick: FindPick; inde
   )
 }
 
+type ConsentState = 'idle' | 'saving' | 'allowed' | 'stopped' | 'failed'
+
+/**
+ * Under an AI result: may AI consider the user's installed and favorited
+ * plugins? Asked here, where the result shows what it would improve, and only
+ * as a line with one button; the answer is kept until the user stops it.
+ */
+export function UseMyPluginsNote({ personalized, t }: { personalized: boolean; t: Translate }): ReactElement {
+  const [state, setState] = useState<ConsentState>('idle')
+  const save = (on: boolean): void => {
+    setState('saving')
+    fetch(api('/dsh-market/ai-use-my-plugins'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on }),
+    })
+      .then(res => { setState(res.ok ? (on ? 'allowed' : 'stopped') : 'failed') })
+      .catch(() => setState('failed'))
+  }
+  if (state === 'allowed') return <p className={css.fpConsent} data-dshm-use-mine="allowed">{t('useMineAllowed')}</p>
+  if (state === 'stopped') return <p className={css.fpConsent} data-dshm-use-mine="stopped">{t('useMineOffDone')}</p>
+  return (
+    <p className={css.fpConsent} data-dshm-use-mine={personalized ? 'on' : 'ask'}>
+      <span>{personalized ? t('useMineOn') : t('useMineAsk')}</span>
+      <button type="button" className={css.fpLink} disabled={state === 'saving'} onClick={() => save(!personalized)}>
+        {personalized ? t('useMineOff') : t('useMineAllow')}
+      </button>
+      {state === 'failed' && <span data-tone="error">{t('useMineFailed')}</span>}
+    </p>
+  )
+}
+
 /** The picks, drawn the same way in the chat and in the market's AI search. */
 export function FindResultView({ result, t, navigation, onOpen }: { result: FindResult; t: Translate; navigation?: HostNavigationStore; onOpen?: (name: string) => void }): ReactElement {
   return (
@@ -148,6 +183,7 @@ export function FindResultView({ result, t, navigation, onOpen }: { result: Find
         </div>
       )}
       <p className={css.fpFoot}>{t('fpFoot')}</p>
+      <UseMyPluginsNote personalized={result.personalized === true} t={t} />
     </div>
   )
 }

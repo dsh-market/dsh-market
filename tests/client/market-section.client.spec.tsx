@@ -12743,6 +12743,30 @@ describe('sidebar shortcut tip (#846)', () => {
     expect(screen.queryByText(en.sidebarTip)).toBeNull()
   })
 
+  it('leaves an Undo behind after turning the shortcut on from the tip (#1276)', async () => {
+    // The only other switch for the row is inside the plugin's own page,
+    // behind a collapsed group. A tip that just vanished left people with a
+    // sidebar row and no way back that they could find.
+    const sidebar = fakeSidebar()
+    render(<MarketSection {...props()} sidebar={sidebar} surface="settings" />)
+    fireEvent.click(await screen.findByRole('button', { name: en.setSidebarOn }))
+    expect(await screen.findByText(en.sidebarTipAdded)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.sidebarTipUndo }))
+    await waitFor(() => { expect(sidebar.sets).toEqual([true, false]) })
+    // Back to the offer, and the row is off again.
+    expect(await screen.findByText(en.sidebarTip)).toBeTruthy()
+    expect(screen.queryByText(en.sidebarTipAdded)).toBeNull()
+  })
+
+  it('does not claim the row was added when the server refused (#1276)', async () => {
+    const sidebar = fakeSidebar()
+    sidebar.set = async () => { throw new Error('refused') }
+    render(<MarketSection {...props()} sidebar={sidebar} surface="settings" />)
+    fireEvent.click(await screen.findByRole('button', { name: en.setSidebarOn }))
+    expect(await screen.findByText('refused')).toBeTruthy()
+    expect(screen.queryByText(en.sidebarTipAdded)).toBeNull()
+  })
+
   it('waits until the saved choice is known before offering the tip', async () => {
     const sidebar = fakeSidebar({ ready: false })
     render(<MarketSection {...props()} sidebar={sidebar} surface="settings" />)
