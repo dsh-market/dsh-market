@@ -31,7 +31,7 @@ One-click themes: install, switch live, no restart.
 </tr>
 <tr>
 <td width="180" align="center"><a href="https://dsh-market.hualong-ai.com/"><img src="assets/partners/hualong.png" alt="HuaLongAI" width="150"></a></td>
-<td>Thanks to <strong>HuaLongAI</strong> for sponsoring this project!<br>HuaLongAI is a stable, efficient API relay service focused on Codex, DeepSeek and Claude models: 100% direct from official sources, never diluted, highly available, with average SLA above 99.2%. Billing is transparent, with token-level bills you can verify line by line, and enterprise contracts and invoices are supported. <a href="https://dsh-market.hualong-ai.com/">dsh-market.hualong-ai.com</a></td>
+<td>Thanks to <strong>HuaLongAI</strong> for sponsoring this project!<br>HuaLongAI is a stable, efficient API relay service focused on Codex, DeepSeek and Claude models: 100% direct from official sources, never diluted, highly available, with average SLA above 99.2%. Billing is transparent, with token-level bills you can verify line by line, and enterprise contracts and invoices are supported. <a href="https://dsh-market.hualong-ai.com/">Sign up here for $2 of free credit</a></td>
 </tr>
 </table>
 <!-- sponsors:end -->

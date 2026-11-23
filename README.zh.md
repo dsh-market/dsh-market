@@ -31,7 +31,7 @@
 </tr>
 <tr>
 <td width="180" align="center"><a href="https://dsh-market.hualong-ai.com/"><img src="assets/partners/hualong.png" alt="华龙算力" width="150"></a></td>
-<td>感谢 <strong>华龙算力（HuaLongAI）</strong> 赞助本项目！<br>HuaLongAI（华龙算力） 是一家稳定、高效的 API 中转服务商，主营 Codex 、Deepseek与 Claude 系列模型，100% 官方源直供、不掺假、高可用，平均SLA高于99.2%；计费透明，Token 级账单可逐笔核验，支持企业合同与发票，<a href="https://dsh-market.hualong-ai.com/">dsh-market.hualong-ai.com</a></td>
+<td>感谢 <strong>华龙算力（HuaLongAI）</strong> 赞助本项目！<br>HuaLongAI（华龙算力） 是一家稳定、高效的 API 中转服务商，主营 Codex 、Deepseek与 Claude 系列模型，100% 官方源直供、不掺假、高可用，平均SLA高于99.2%；计费透明，Token 级账单可逐笔核验，支持企业合同与发票，<a href="https://dsh-market.hualong-ai.com/">点击此处注册赠送2$专属使用额度</a></td>
 </tr>
 </table>
 <!-- sponsors:end -->
