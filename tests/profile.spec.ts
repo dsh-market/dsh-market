@@ -622,6 +622,49 @@ describe('readGitResolutionCommit', () => {
     // sibling's identity against another's.
     expect(readGitResolutionCommit('web', remote)).toBeNull()
   })
+
+  it('reads a monorepo subpackage from the archive resolution pnpm wrote (#1296)', () => {
+    // pnpm records a github.com install as the host's archive, never as a
+    // `type: git` entry: there is no `commit:` and no `repo:`, the commit is
+    // in the `tarball:` URL and the subpackage is the `path:` beside it. These
+    // two lines are pnpm 12.4.1's own output, copied from a real install of a
+    // monorepo's two subpackages at two different commits — the shape the
+    // reporter hit when only one of three siblings had been updated.
+    writeLock([
+      'lockfileVersion: 9',
+      `  resolution: {gitHosted: true, integrity: sha512-aaa, path: /packages/plug-a, tarball: https://codeload.github.com/me/mono/tar.gz/${A}}`,
+      `  resolution: {gitHosted: true, integrity: sha512-bbb, path: /packages/plug-b, tarball: https://codeload.github.com/me/mono/tar.gz/${B}}`,
+      '',
+    ].join('\n'))
+
+    const shortcut = 'github:me/mono'
+    // Each sibling answers with its OWN commit. Reading only the `type: git`
+    // shape returned null for all of them, so the caller fell through to
+    // `readLockCommits`, which keeps one slot per repository (#1296).
+    expect(readGitResolutionCommit('web', `${shortcut}#path:/packages/plug-a`)).toBe(A)
+    expect(readGitResolutionCommit('web', `${shortcut}#path:/packages/plug-b`)).toBe(B)
+    expect(readGitResolutionCommit('web', `${shortcut}#path:/packages/plug-c`)).toBeNull()
+    // An archive entry belongs to one subpackage by its `path:`: a spec that
+    // names no subpath is the repository root, not whichever sibling pnpm
+    // happened to list, and another repository is still another repository.
+    expect(readGitResolutionCommit('web', shortcut)).toBeNull()
+    expect(readGitResolutionCommit('web', 'github:me/other#path:/packages/plug-a')).toBeNull()
+  })
+
+  it('reads a subpackage of a GitLab monorepo archive the same way (#1296)', () => {
+    writeLock([
+      'lockfileVersion: 9',
+      `  resolution: {gitHosted: true, path: /packages/plug-a, tarball: https://gitlab.com/me/mono/-/archive/${A}/mono-${A}.tar.gz}`,
+      `  resolution: {gitHosted: true, path: /packages/plug-b, tarball: https://gitlab.com/me/mono/-/archive/${B}/mono-${B}.tar.gz}`,
+      '',
+    ].join('\n'))
+
+    expect(readGitResolutionCommit('web', 'gitlab:me/mono#path:/packages/plug-a')).toBe(A)
+    expect(readGitResolutionCommit('web', 'gitlab:me/mono#path:/packages/plug-b')).toBe(B)
+    // Host-qualified, as everywhere else: GitHub's same-named repository does
+    // not answer for this one.
+    expect(readGitResolutionCommit('web', 'github:me/mono#path:/packages/plug-a')).toBeNull()
+  })
 })
 
 describe('hasDshManifest / entryArtifactExists (#18 boot-brick guards)', () => {
