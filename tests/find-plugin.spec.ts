@@ -257,7 +257,17 @@ describe('/find-plugin: a thinking model', () => {
     { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'off' },
     { provider: 'custom-gateway', model: 'model-alias' },
   ])('lets DSH apply model defaults for $provider', async selection => {
-    const llm = fakeModel('{"intro":"","picks":[{"name":"callai-seo-mcp","why":"fits"}]}')
+    // Picks are made by candidate ID: answer with the ID the prompt gave callai-seo-mcp.
+    const calls: Array<Record<string, unknown>> = []
+    const llm: LlmLike & { calls: Array<Record<string, unknown>> } = {
+      calls,
+      stream(options) {
+        calls.push(options)
+        const content = JSON.stringify(options.messages)
+        const id = /\[(p\d+)\][^\n]*?callai-seo-mcp/u.exec(content.replace(/\\n/g, '\n'))?.[1] ?? 'p0'
+        return (async function* () { yield { type: 'text-delta', text: JSON.stringify({ intro: '', picks: [{ id, why: 'fits' }] }) } })()
+      },
+    }
     const search = await findPlugins({ request: 'seo', registry, llm, selection })
     const recommendations = await recommendPlugins({
       registry, llm, selection, installed: ['dsh-notify-me'], favorites: [], preferZh: false,
