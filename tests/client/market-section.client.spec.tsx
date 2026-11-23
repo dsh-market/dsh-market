@@ -5221,7 +5221,9 @@ describe('lost install progress (config page reopened)', () => {
       }))
       render(<MarketSection {...props()} />)
       await vi.waitFor(() => { screen.getByRole('button', { name: en.installing }) })
-      fireEvent.click(screen.getByRole('button', { name: `${en.opInstalling} 1/1` }))
+      // Restoring the card's busy state can finish before the catalog names the task.
+      const taskButton = await vi.waitFor(() => screen.getByRole('button', { name: `${en.opInstalling} 1/1` }))
+      fireEvent.click(taskButton)
       const panel = document.querySelector('[class*="opPanel"]')
       expect(panel, 'the Tasks panel did not open').toBeTruthy()
       expect(panel!.textContent).toContain('dsh-loop')
