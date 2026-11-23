@@ -13,6 +13,16 @@ const reply = (status: number, body: unknown) => Promise.resolve(new Response(JS
 beforeEach(() => { localStorage.clear() })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+it('does not reuse a cached recommendation made before exact source selection (#1290)', () => {
+  localStorage.setItem('dshm-ai-recommend', JSON.stringify({ urls: ['https://github.com/o/b'] }))
+  const fetch = vi.fn()
+  vi.stubGlobal('fetch', fetch)
+  render_()
+  expect(screen.getByRole('button', { name: 'recTrigger' })).toBeTruthy()
+  expect(screen.queryByText('b')).toBeNull()
+  expect(fetch).not.toHaveBeenCalled()
+})
+
 it('asks nothing until clicked, then draws the picks as catalog cards and keeps them', async () => {
   const fetch = vi.fn(() => reply(200, { result: { picks: [{ url: 'https://github.com/o/b' }, { url: 'https://github.com/o/zzz' }] } }))
   vi.stubGlobal('fetch', fetch)

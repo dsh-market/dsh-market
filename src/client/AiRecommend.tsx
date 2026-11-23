@@ -27,8 +27,8 @@ type RecState =
 
 function readSaved(): string[] | null {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as { urls?: unknown } | null
-    return Array.isArray(value?.urls) ? value.urls.filter((url): url is string => typeof url === 'string') : null
+    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as { selectionVersion?: number; urls?: unknown } | null
+    return value?.selectionVersion === 2 && Array.isArray(value.urls) ? value.urls.filter((url): url is string => typeof url === 'string') : null
   } catch {
     return null
   }
@@ -37,7 +37,7 @@ function readSaved(): string[] | null {
 function save(urls: string[] | null): void {
   try {
     if (urls === null) localStorage.removeItem(STORAGE_KEY)
-    else localStorage.setItem(STORAGE_KEY, JSON.stringify({ urls, at: new Date().toISOString() }))
+    else localStorage.setItem(STORAGE_KEY, JSON.stringify({ selectionVersion: 2, urls, at: new Date().toISOString() }))
   } catch { /* storage unavailable: the set just is not kept */ }
 }
 

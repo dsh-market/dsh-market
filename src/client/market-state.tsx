@@ -329,16 +329,17 @@ const t = props.t
     }
   }, [props.preferredSubsectionId])
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
-  // A plugin someone asked to open from outside this page (the /find-plugin
-  // card, AI search): show its install dialog once the catalog can name it.
+  const [openPluginUnavailable, setOpenPluginUnavailable] = useState(false)
+  const openPluginUnavailableDone = useCallback(() => setOpenPluginUnavailable(false), [])
+  // The /find-plugin card names a specific catalog entry by repository URL.
   const openRequest = useSyncExternalStore(subscribeOpenPlugin, pendingOpenPlugin, () => null)
   useEffect(() => {
     if (openRequest === null || data === null) return
-    const entry = data.plugins.find(plugin => plugin.name === openRequest || plugin.npm === openRequest)
-    if (entry === undefined) return
-    claimOpenPlugin(openRequest)
+    if (!claimOpenPlugin(openRequest)) return
+    const entry = data.plugins.find(plugin => plugin.url === openRequest)
     setTab('discover')
-    setConfirming(entry)
+    setOpenPluginUnavailable(entry === undefined)
+    setConfirming(entry ?? null)
   }, [openRequest, data])
   /** The plugin whose comment thread is open, or null. */
   const [commentsFor, setCommentsFor] = useState<RegistryPlugin | null>(null)
@@ -1341,7 +1342,7 @@ const t = props.t
     installedSort, installedView, lang, lightbox, loadError, loadedDisabled, localDescriptions,
     marketGone, migrationConfirm, mounted, mountedRef, newGroupName, nextRecordId, noteDraft, notes,
     notesFor, notesRequest, notesState, notificationSnapshot, notingName, openInHost, openLightbox,
-    openOperations, operationsOpen, patchDisabledNames, pendingBackup, pendingDependencies,
+    openOperations, openPluginUnavailable, openPluginUnavailableDone, operationsOpen, patchDisabledNames, pendingBackup, pendingDependencies,
     pendingUpdate, pluginMenuUrl, pluginsYRef, presetOpen, profileBlockRef, profileBlocked,
     profileName, progressCurrent, progressDone, progressLine, progressPct, progressPhase, q,
     qFavorites, qInstalled, qThemes, reconnectRound, reconnecting, records, recoveredInstall,

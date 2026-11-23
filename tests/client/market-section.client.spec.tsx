@@ -15,6 +15,7 @@ import { GithubRoutedImg, MarketSection, OwnerAvatar, resetHostCompatibilityCach
 import css from '../../src/client/Market.module.css'
 import { DISMISSED_HOST_STORAGE_KEY, resetDismissedHostCache } from '../../src/client/dismissed-host.ts'
 import { downloadStatsText } from '../../src/client/download-stats.ts'
+import { FindResultView } from '../../src/client/FindPluginCard.tsx'
 import { createHostNavigation } from '../../src/client/host-navigation.ts'
 import { OperationsPanel } from '../../src/client/OperationsPanel.tsx'
 import { SEARCH_DELAY_MS } from '../../src/client/SearchInput.tsx'
@@ -301,6 +302,59 @@ function props() {
     themeStore: { subscribe: () => () => {}, getSnapshot: () => null },
   }
 }
+
+describe('/find-plugin installation source (#1290)', () => {
+  const sameName = { ...REGISTRY.plugins[0]!, owner: 'same-name-fork', url: 'https://github.com/same-name-fork/dsh-loop', npm: '@same-name-fork/dsh-loop' }
+  const pick = { ...sameName, why: 'Fits this task', categories: ['Tools'], description: 'Selected repo', downloads: null }
+  const result = { intro: 'Found one', request: 'run a loop', picks: [pick], model: 'fixture' }
+
+  it('opens the same repository as direct install, even when the catalog loads after navigation', async () => {
+    stubFetch({
+      '/dsh-market/registry': { source: 'live', registry: { ...REGISTRY, count: 4, plugins: [...REGISTRY.plugins, sameName] } },
+      '/dsh-market/install': { ok: true },
+    })
+    const navigation = createHostNavigation()
+    navigation.attach({ openList: () => {}, openBundle: () => {} })
+    const card = <FindResultView result={{ ...result, selectionVersion: 2 }} t={props().t} navigation={navigation} />
+    render(<>{card}<button role="tab" id="test-dsh-market">Plugin Market</button></>)
+
+    fireEvent.click(screen.getByRole('button', { name: en.fpInstallHere }))
+    expect(screen.getByText(sameName.npm)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.fpConfirmInstall }))
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/install').map(call => call.body)).toEqual([{ url: sameName.url }]))
+
+    fireEvent.click(screen.getByRole('button', { name: en.fpOpenMarket }))
+    render(<MarketSection {...props()} />)
+    const dialog = within(await screen.findByRole('dialog', { name: `${en.confirmTitle} ${pick.name}?` }))
+    expect(dialog.getByText(sameName.owner)).toBeTruthy()
+    fireEvent.click(dialog.getByRole('button', { name: en.confirmInstall }))
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/install').map(call => call.body)).toEqual([
+      { url: sameName.url }, { url: sameName.url },
+    ]))
+  })
+
+  it('does not open a same-name replacement when the selected repository is missing', async () => {
+    stubFetch()
+    const navigation = createHostNavigation()
+    navigation.attach({ openList: () => {}, openBundle: () => {} })
+    const card = <FindResultView result={{ ...result, selectionVersion: 2 }} t={props().t} navigation={navigation} />
+    render(<>{card}<button role="tab" id="test-dsh-market">Plugin Market</button><MarketSection {...props()} /></>)
+
+    fireEvent.click(screen.getByRole('button', { name: en.fpOpenMarket }))
+    expect(await screen.findByText(en.fpOpenUnavailable)).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/install')).toBe(false)
+  })
+
+  it('keeps older chat cards readable and asks for a fresh result before installing', () => {
+    render(<FindResultView result={result} t={props().t} />)
+    expect(screen.getByText(pick.why)).toBeTruthy()
+    expect(screen.getByText(en.fpSearchAgain)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.fpInstallHere })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.fpOpenMarket })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.fpCopy })).toBeNull()
+  })
+})
 
 /**
  * Card names in VISUAL (ranked) order, reassembled from the masonry columns.
