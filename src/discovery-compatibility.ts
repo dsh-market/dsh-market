@@ -286,9 +286,11 @@ function declarationResult(
 /**
  * Derive the current host verdict from raw manifest facts.
  *
- * Every valid declaration is conjunctive: an explicit `engines.dsh` and all
- * host peers must agree. A malformed declaration keeps a passing result
- * unknown, but cannot erase a definite mismatch from another declaration.
+ * An explicit `engines.dsh` supersedes host peer declarations, matching the
+ * host loader. Without one, host peers are conjunctive. Host packages declared
+ * as ordinary dependencies remain checked because pnpm can hoist them over the
+ * runtime copy. A malformed declaration keeps a passing result unknown, but
+ * cannot erase a definite mismatch from another declaration.
  */
 export function deriveHostCompatibility(
   facts: NpmManifestFacts | null,
@@ -301,14 +303,15 @@ export function deriveHostCompatibility(
   const declarations: HostRequirementDeclaration[] = []
   if (facts.enginesDsh !== null) {
     declarations.push({ kind: 'engine', range: facts.enginesDsh })
-  }
-  for (const [name, declared] of Object.entries(facts.peerDependencies)) {
-    // Cordis (4.x) and schemastery (3.x) are host packages, but are not on
-    // DSH's lockstep 0.x release line and therefore say nothing about the
-    // DSH version. `hostPackages` is the local install inventory plus its
-    // curated fallback, so future lockstep DSH packages are picked up too.
-    if (!hostPackages.has(name) || !/^@deepseek-ai\/dsh(?:-|$)/.test(name)) continue
-    declarations.push({ kind: 'peer', package: name, range: declared })
+  } else {
+    for (const [name, declared] of Object.entries(facts.peerDependencies)) {
+      // Cordis (4.x) and schemastery (3.x) are host packages, but are not on
+      // DSH's lockstep 0.x release line and therefore say nothing about the
+      // DSH version. `hostPackages` is the local install inventory plus its
+      // curated fallback, so future lockstep DSH packages are picked up too.
+      if (!hostPackages.has(name) || !/^@deepseek-ai\/dsh(?:-|$)/.test(name)) continue
+      declarations.push({ kind: 'peer', package: name, range: declared })
+    }
   }
   for (const [name, declared] of Object.entries(facts.dependencies ?? {})) {
     // The peer filter above restricts itself to DSH's lockstep line because a

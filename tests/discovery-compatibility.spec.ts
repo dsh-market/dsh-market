@@ -36,7 +36,7 @@ describe('deriveHostCompatibility', () => {
     expect(deriveHostCompatibility(declared, '0.2.0-rc.3', HOST_PACKAGES).status).toBe('incompatible')
   })
 
-  it('uses engines.dsh and lockstep DSH peers while excluding Cordis and schemastery', () => {
+  it('prefers engines.dsh over lockstep DSH peers while excluding Cordis and schemastery', () => {
     const result = deriveHostCompatibility(facts({
       enginesDsh: '>=0.1.1-rc.2',
       peerDependencies: {
@@ -49,9 +49,8 @@ describe('deriveHostCompatibility', () => {
     expect(result.status).toBe('compatible')
     expect(result.declarations).toEqual([
       { kind: 'engine', range: '>=0.1.1-rc.2' },
-      { kind: 'peer', package: '@deepseek-ai/dsh-settings', range: '^0.1.1-rc.2' },
     ])
-    expect(result.requirement).toBe('>=0.1.1-rc.2 ∩ ^0.1.1-rc.2')
+    expect(result.requirement).toBe('>=0.1.1-rc.2')
   })
 
   it('includes prerelease hosts across base-version tuples', () => {
@@ -97,12 +96,13 @@ describe('deriveHostCompatibility', () => {
     expect(result.status).toBe('compatible')
   })
 
-  it('makes conflicting declarations incompatible and malformed-only matches unknown', () => {
+  it('lets engines.dsh supersede a conflicting peer and malformed-only matches unknown', () => {
     const conflicting = deriveHostCompatibility(facts({
       enginesDsh: '>=0.1.2-alpha.2',
       peerDependencies: { '@deepseek-ai/dsh-tools': '<0.1.2-alpha.2' },
     }), '0.1.2-alpha.2', HOST_PACKAGES)
-    expect(conflicting.status).toBe('incompatible')
+    expect(conflicting.status).toBe('compatible')
+    expect(conflicting.requirement).toBe('>=0.1.2-alpha.2')
 
     const malformed = deriveHostCompatibility(facts({
       enginesDsh: 'catalog:current',
@@ -445,10 +445,9 @@ describe('host-compatibility declaration semantics (Phase 1 additions)', () => {
     expect(result.requirement).toBe('^0.1.1-rc.2')
   })
 
-  it('is conjunctive: one failing peer refuses even when engines.dsh passes', () => {
+  it('is conjunctive when engines.dsh is absent: one failing peer refuses', () => {
     const result = deriveHostCompatibility(
       facts({
-        enginesDsh: '>=0.1.0',
         peerDependencies: {
           '@deepseek-ai/dsh-settings': '^0.1.1-rc.2',
           '@deepseek-ai/dsh-tools': '^99.0.0',
@@ -459,8 +458,7 @@ describe('host-compatibility declaration semantics (Phase 1 additions)', () => {
     )
     expect(result.status).toBe('incompatible')
     expect(result.basis).toBe('manifest')
-    // All three declarations surface in the human-readable requirement.
-    expect(result.requirement).toContain('>=0.1.0')
+    // Both peer declarations surface in the human-readable requirement.
     expect(result.requirement).toContain('^0.1.1-rc.2')
     expect(result.requirement).toContain('^99.0.0')
   })
