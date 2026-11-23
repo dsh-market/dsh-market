@@ -121,7 +121,7 @@ node scripts/offline-pack.mjs --catalog plugins.json --out acme-offline.tgz
   - `..`, absolute paths, links or device files;
   - files other than `plugins.json` and `tarballs/*.tgz`;
   - more than 512 MB or more than 2000 files.
-- Plugins installed from a bundle are not checked for updates. To update them, import a newer bundle.
+- Plugins installed from a bundle are not checked for updates. To update them, import the newer bundle: it replaces the older import of the same catalog (matched by its label). Then remove the installed plugin and install it again to pick up the new version.
 
 An administrator can also unpack a bundle to a fixed place and point a policy `catalogs[].file` at it.
 

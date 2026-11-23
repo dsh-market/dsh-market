@@ -5485,18 +5485,32 @@ export function mountMarketRoutes(
             }
             const state = readMarketState(activeProfileDir)
             const id = userCatalogId(entry)
-            const saved = (state.userCatalogs ?? []).filter(item => item.id !== id)
+            // A newer pack of the same catalog replaces the older import. The id
+            // follows the content, so without this the old copy keeps winning
+            // ("first source wins") and the new version never shows (#1295).
+            // "Same catalog" means an earlier OFFLINE import with the same label.
+            const labelKey = JSON.stringify(probe.info.label ?? null)
+            const replaced: Array<{ id: string; file: string }> = []
+            for (const item of state.userCatalogs ?? []) {
+              if (item.id === id || item.file === undefined || !isInsideOfflineRoot(item.file)) continue
+              const older = await probeCatalog({ file: item.file })
+              if (older.registry !== null && labelKey !== 'null' && JSON.stringify(older.info.label ?? null) === labelKey) {
+                replaced.push({ id: item.id, file: item.file })
+              }
+            }
+            const saved = (state.userCatalogs ?? []).filter(item => item.id !== id && !replaced.some(old => old.id === item.id))
             if (saved.length >= MAX_USER_CATALOGS) {
               rmSync(extracted.dir, { recursive: true, force: true })
               sendJson(response, 400, { ok: false, code: 'limit', limit: MAX_USER_CATALOGS, error: `at most ${String(MAX_USER_CATALOGS)} catalogs / 最多添加 ${String(MAX_USER_CATALOGS)} 个目录` })
               return
             }
             writeMarketState(activeProfileDir, { ...state, userCatalogs: [...saved, { id, ...entry }] })
+            for (const old of replaced) rmSync(dirname(old.file), { recursive: true, force: true })
             refreshMarketState()
             forgetCatalog()
             invalidateUpdates()
-            logEvent('info', 'offline', `imported bundle ${extracted.id}: ${String(probe.info.count)} plugins, ${String(extracted.files)} files`)
-            sendJson(response, 200, { ok: true, id, count: probe.info.count, label: probe.info.label })
+            logEvent('info', 'offline', `imported bundle ${extracted.id}: ${String(probe.info.count)} plugins, ${String(extracted.files)} files${replaced.length > 0 ? `, replaced ${String(replaced.length)} older import(s)` : ''}`)
+            sendJson(response, 200, { ok: true, id, count: probe.info.count, label: probe.info.label, replaced: replaced.length })
           })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })

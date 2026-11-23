@@ -1762,6 +1762,35 @@ describe('offline bundle import', () => {
     expect(readFileSync(join(file, '..', 'tarballs', 'acme-badge-1.0.0.tgz'), 'utf8')).toBe('tarball bytes')
   })
 
+  it('importing a newer pack of the same catalog replaces the older import instead of sitting behind it (#1295)', async () => {
+    await importBundle(GOOD())
+    const first = readMarketState(dir).userCatalogs![0]!
+    const firstDir = join(first.file!, '..')
+    const next = bundle([
+      { name: 'plugins.json', data: Buffer.from(JSON.stringify({ ...PLUGINS, plugins: [{ ...PLUGINS.plugins[0], version: '2.0.0', tarball: './tarballs/acme-badge-2.0.0.tgz' }] })) },
+      { name: 'tarballs/acme-badge-2.0.0.tgz', data: Buffer.from('v2 bytes') },
+    ])
+    const res = await importBundle(next)
+    expect(res.status, res.body).toBe(200)
+    expect(jsonBody(res)).toMatchObject({ ok: true, replaced: 1 })
+    const saved = readMarketState(dir).userCatalogs!
+    expect(saved).toHaveLength(1)
+    expect(saved[0]!.id).not.toBe(first.id)
+    expect(existsSync(firstDir)).toBe(false)
+    expect(readFileSync(join(saved[0]!.file!, '..', 'tarballs', 'acme-badge-2.0.0.tgz'), 'utf8')).toBe('v2 bytes')
+  })
+
+  it('a pack with a different label is a different catalog and is kept beside the first', async () => {
+    await importBundle(GOOD())
+    const other = bundle([
+      { name: 'plugins.json', data: Buffer.from(JSON.stringify({ ...PLUGINS, label: 'Other bundle' })) },
+      { name: 'tarballs/acme-badge-1.0.0.tgz', data: Buffer.from('other') },
+    ])
+    const res = await importBundle(other)
+    expect(jsonBody(res)).toMatchObject({ ok: true, replaced: 0 })
+    expect(readMarketState(dir).userCatalogs).toHaveLength(2)
+  })
+
   it('refuses a bundle that tries to leave its directory, and keeps nothing', async () => {
     const evil = bundle([
       { name: 'plugins.json', data: Buffer.from(JSON.stringify(PLUGINS)) },

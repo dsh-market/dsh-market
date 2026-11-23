@@ -121,7 +121,7 @@ node scripts/offline-pack.mjs --catalog plugins.json --out acme-offline.tgz
   - `..`、绝对路径、链接、设备文件；
   - `plugins.json` 和 `tarballs/*.tgz` 以外的文件；
   - 超过 512 MB 或超过 2000 个文件。
-- 从离线包装的插件不检查更新，要更新就导入新版的离线包。
+- 从离线包装的插件不检查更新，要更新就导入新版的离线包：它会替换同一个目录（按目录名称认）的旧导入。然后把已装的插件卸载再装一遍，就会用上新版。
 
 管理员也可以把离线包解压到固定位置，在策略文件里用 `catalogs[].file` 指向它。
 
