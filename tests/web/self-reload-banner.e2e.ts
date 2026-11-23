@@ -12,25 +12,11 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { landBuild } from './market-build.ts'
-import { dshAvailable, dshCommand, launchMarketScaffold, openMarketPage, openMarketUi, waitMarketCatalog, watchConsole } from './scaffold.ts'
+import { hostCanSwap, landBuild } from './market-build.ts'
+import { dshAvailable, launchMarketScaffold, openMarketPage, openMarketUi, waitMarketCatalog, watchConsole } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
-import { spawnSync } from 'node:child_process'
 
 const SHOTS = '/tmp/self-reload-shots'
-
-/** reconcileProfile arrived in 0.2.1-rc.1; older hosts have no "Apply now". */
-function hostCanSwap(): boolean {
-  const command = dshCommand()
-  if (command === null) return false
-  const probe = spawnSync(command, ['--version'], { shell: true, encoding: 'utf8', timeout: 30_000, cwd: process.env.DSHM_E2E_DSH_CWD })
-  const found = /(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?/.exec(`${probe.stdout ?? ''}${probe.stderr ?? ''}`)
-  if (found === null) return false
-  const [major, minor, patch] = [Number(found[1]), Number(found[2]), Number(found[3])]
-  if (major > 0 || minor > 2 || (minor === 2 && patch > 1)) return true
-  if (minor !== 2 || patch !== 1) return false
-  return found[4] === undefined || (found[4] === 'rc' && Number(found[5]) >= 1)
-}
 
 describe.skipIf(!dshAvailable() || !hostCanSwap()).sequential('web e2e: "Apply now" after the market updated itself', () => {
   let scaffold: WebScaffold
@@ -47,7 +33,7 @@ describe.skipIf(!dshAvailable() || !hostCanSwap()).sequential('web e2e: "Apply n
     // is the only thing that differs afterwards.
     await (await openMarket('en-US')).context().close()
     await new Promise(resolve => setTimeout(resolve, 8000))
-    newVersion = landBuild(scaffold, 1, { newRoute: '/dsh-market/e2e-banner-new' })
+    newVersion = await landBuild(scaffold, 1, { newRoute: '/dsh-market/e2e-banner-new' })
   }, 600_000)
   afterAll(async () => { await browser?.close(); await scaffold?.close() })
 
