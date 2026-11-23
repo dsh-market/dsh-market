@@ -4,11 +4,28 @@
  * newer version, added with `dsh plugin add`. Shared by the self-reload specs.
  */
 
-import { execSync } from 'node:child_process'
+import { exec, execSync, spawnSync } from 'node:child_process'
 import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { compareVersions } from '../../src/updates.ts'
 import { dshCommand } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
+
+const execAsync = promisify(exec)
+
+/** First published DSH HMR with both runExclusive and reconcileProfile. */
+export function hostCanSwap(): boolean {
+  const command = dshCommand()
+  if (command === null) return false
+  const probe = spawnSync(command, ['--version'], {
+    shell: true, encoding: 'utf8', timeout: 30_000, cwd: process.env.DSHM_E2E_DSH_CWD,
+  })
+  const version = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/.exec(`${probe.stdout ?? ''}\n${probe.stderr ?? ''}`)?.[0]
+  const comparison = version === undefined ? null : compareVersions(version, '0.2.1-alpha.3')
+  if (probe.status !== 0 || comparison === null) throw new Error('could not read the DSH host version for self-reload tests')
+  return comparison >= 0
+}
 
 export interface BuildOptions {
   /** A route only this build has. */
@@ -49,7 +66,7 @@ export function baseVersion(scaffold: WebScaffold): string {
  * it becomes the patch version above the base build.
  * @returns the version that landed.
  */
-export function landBuild(scaffold: WebScaffold, n: number, options: BuildOptions = {}): string {
+export async function landBuild(scaffold: WebScaffold, n: number, options: BuildOptions = {}): Promise<string> {
   const base = baseVersion(scaffold)
   const [major, minor, patch] = base.split('.').map(Number)
   const version = `${String(major)}.${String(minor)}.${String(patch! + n)}`
@@ -94,10 +111,11 @@ export function apply(ctx, config) {
     mkdirSync(kept)
     for (const name of readdirSync(installedLib).filter(file => file.endsWith('.js'))) linkSync(join(installedLib, name), join(kept, name))
   }
-  execSync(`${dshCommand()} plugin --profile web add ${JSON.stringify(tarball)}`, {
+  // The install may request packages from the fixture registry in this
+  // process. Keep the event loop free to serve those requests.
+  await execAsync(`${dshCommand()} plugin --profile web add ${JSON.stringify(tarball)}`, {
     env: { ...process.env, DSH_HOME: scaffold.home, CI: 'true' },
     cwd: process.env.DSHM_E2E_DSH_CWD ?? process.cwd(),
-    stdio: 'pipe',
     timeout: 300_000,
   })
   if (options.keepIdentity === true) {

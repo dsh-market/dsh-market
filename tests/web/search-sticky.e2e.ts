@@ -10,21 +10,19 @@
 import { chromium } from 'playwright'
 import type { Browser, Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, launchMarketScaffold, openMarketPage, openMarketUi, waitMarketCatalog } from './scaffold.ts'
+import { dshAvailable, enableMarketSettings, launchMarketScaffold, openMarketPage, openMarketSettings, waitMarketCatalog } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 describe.skipIf(!dshAvailable())('web e2e: search clear controls and sticky header', () => {
   let s: WebScaffold, browser: Browser, page: Page
   beforeAll(async () => {
     s = await launchMarketScaffold()
+    // The scroll and hit-testing assertions exercise the narrow Settings panel.
+    await enableMarketSettings(s)
     browser = await chromium.launch()
     page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
     await openMarketPage(page, s)
-    for (let i = 0; i < 6; i++) {
-      const b = page.getByRole('button', { name: /^(Continue|继续|Configure later|稍后配置)$/ }).first()
-      try { await b.waitFor({ timeout: i === 0 ? 30_000 : 3000 }); await b.click() } catch { break }
-    }
-    await openMarketUi(page)
+    await openMarketSettings(page)
     await waitMarketCatalog(page)
     // Exercise the Favorites toolbar with an actual saved catalog entry in
     // this throwaway profile, without mocking the host's settings API.

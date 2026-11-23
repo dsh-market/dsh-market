@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dismissStartGate, dshAvailable, launchMarketScaffold, openMarketPage, openMarketUi, waitMarketCatalog, watchConsole } from './scaffold.ts'
+import { dismissStartGate, dshAvailable, enableMarketSettings, launchMarketScaffold, openMarketPage, openMarketSettings, waitMarketCatalog, watchConsole } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 describe.skipIf(!dshAvailable())('host dispatches the market settings card (#516)', () => {
@@ -20,15 +20,14 @@ describe.skipIf(!dshAvailable())('host dispatches the market settings card (#516
 
   async function checkCard(page: Page, mode: 'web' | 'desktop') {
     const console = watchConsole(page)
+    await enableMarketSettings(scaffold)
     await openMarketPage(page, scaffold)
     for (let i = 0; i < 6; i++) {
       const button = page.getByRole('button', { name: /^(Continue|继续|Configure later|稍后配置)$/ }).first()
       try { await button.waitFor({ timeout: i === 0 ? 30_000 : 1500 }); await button.click() } catch { break }
     }
-    // DSH 0.2.1 removed the settings dialog. The card is then on the plugin's
-    // own page under Plugins — the `plugins.bundle.config` seat this package
-    // registers — and the market page itself comes from the sidebar row
-    // (#846), not from a settings section.
+    // Newer hosts put Settings in the account menu and the configuration
+    // card on the plugin's own page under Plugins.
     const settingsButton = page.getByRole('button', { name: /^(设置|Settings)$/ }).first()
     if (!(await settingsButton.isVisible().catch(() => false))) {
       // 0.2.1's "Get started" gate sits over the whole app on a fresh profile
@@ -45,7 +44,7 @@ describe.skipIf(!dshAvailable())('host dispatches the market settings card (#516
       if (shot) await page.screenshot({ path: join(shot, `${mode}-card.png`) })
       // Back to the market's own page: on this line Settings lives in the
       // account menu, and the section is the same one every host serves.
-      await openMarketUi(page)
+      await openMarketSettings(page)
       await waitMarketCatalog(page, { cards: false })
       const artifacts = process.env.DSHM_SETTINGS_ARTIFACTS
       if (artifacts) await page.screenshot({ path: join(artifacts, `${mode}-market.png`) })
@@ -78,6 +77,7 @@ describe.skipIf(!dshAvailable())('host dispatches the market settings card (#516
       await page.getByText(/^(下载区域|Download region)$/).waitFor()
       const shot = process.env.DSHM_SETTINGS_ARTIFACTS
       if (shot) await card.locator('..').screenshot({ path: join(shot, `${mode}-card.png`) })
+      await page.getByRole('button', { name: /^(Close|关闭)$/ }).first().click()
     } else {
       // The host replaced that page with Config-derived forms and moved a
       // plugin's own configuration onto its bundle's page in the sidebar's
@@ -101,14 +101,9 @@ describe.skipIf(!dshAvailable())('host dispatches the market settings card (#516
       await page.getByText(/^(Download region|下载区域)$/).waitFor({ timeout: 15_000 })
       const shot = process.env.DSHM_SETTINGS_ARTIFACTS
       if (shot) await page.screenshot({ path: join(shot, `${mode}-card.png`) })
-      // Back to the market's own page for the assertion every host shares.
-      await page.getByRole('button', { name: /^(设置|Settings)$/ }).first().click()
     }
 
-    // The market's own section is registered through `settings.section`,
-    // which 0.1.7 still declares — asserted on BOTH generations, and on the
-    // newer one it is the only market surface a user reaches from Settings.
-    await page.getByText(/^(插件市场|Plugin Market)$/).first().click()
+    await openMarketSettings(page)
     await waitMarketCatalog(page, { cards: false })
     const artifacts = process.env.DSHM_SETTINGS_ARTIFACTS
     if (artifacts) await page.screenshot({ path: join(artifacts, `${mode}-market.png`) })
