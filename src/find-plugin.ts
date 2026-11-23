@@ -196,6 +196,8 @@ export interface FindResult {
   /** Which model answered, for the card's footnote. */
   model: string
   at: string
+  /** Older saved results lack an exact candidate selection. */
+  selectionVersion?: 2
   /** Whether the user's installed and favorited plugins informed the picks (they allowed it). */
   personalized?: boolean
 }
@@ -223,10 +225,20 @@ export interface LlmLike {
 
 export interface ModelSelectionLike { provider: string; model: string; reasoningEffort?: string }
 
-function catalogLine(plugin: RegistryPlugin, index: number, registry: Registry, preferZh: boolean): string {
+function catalogLine(plugin: RegistryPlugin, registry: Registry, preferZh: boolean): string {
   const cats = pluginCategories(plugin).map(id => registry.categories[id]?.[preferZh ? 'zh' : 'en'] ?? registry.categories[id]?.en ?? id).join('/')
   const stats = [typeof plugin.downloads === 'number' ? `downloads ${plugin.downloads}` : '', typeof plugin.stars === 'number' ? `stars ${plugin.stars}` : ''].filter(Boolean).join(', ')
-  return `${index + 1}. ${plugin.name} [${cats}] ${stats}\n   ${describe(plugin, preferZh).slice(0, 400)}`
+  return `${plugin.name} [${cats}] ${stats}\n   ${describe(plugin, preferZh).slice(0, 400)}`
+}
+
+const candidateId = (index: number): string => `p${index + 1}`
+
+function candidateLines(candidates: Candidate[], registry: Registry, preferZh: boolean): string[] {
+  return candidates.map(({ plugin }, index) => {
+    const source = [plugin.owner, plugin.npm].filter(Boolean).join(' / ')
+    const label = source === '' ? '' : ` (${source})`
+    return `[${candidateId(index)}]${label} ${catalogLine(plugin, registry, preferZh)}`
+  })
 }
 
 /** The instruction and the candidates, as the one message the model reads. */
@@ -239,8 +251,8 @@ export function buildPickPrompt(request: string, registry: Registry, found: { ca
       : ''
   const system = [
     'You help a user pick plugins from the DSH plugin market. Answer ONLY with one JSON object, no prose around it:',
-    '{"intro": string, "picks": [{"name": string, "why": string}]}',
-    '- picks: the 1 to 5 candidates that best fit what the user actually wants, best first. Use names exactly as listed. Never include a name that is not in the list. Return [] if none fit.',
+    '{"intro": string, "picks": [{"id": string, "why": string}]}',
+    '- picks: the 1 to 5 candidates that best fit what the user actually wants, best first. Use the candidate IDs (e.g. "p1") exactly as listed. Different entries may share a name. Return [] if none fit.',
     '- why: one short sentence on why it fits THIS request (not a copy of its description).',
     '- intro: one short sentence framing the result, e.g. what you understood they want, or that nothing fits.',
     `- Write intro and why in ${preferZh ? 'Simplified Chinese' : 'the language of the request'}.`,
@@ -251,12 +263,12 @@ export function buildPickPrompt(request: string, registry: Registry, found: { ca
     '', 'Already installed:', ...(have.installed.length === 0 ? ['(none)'] : have.installed.map(plugin => `- ${plugin.name}: ${describe(plugin, preferZh).slice(0, 160)}`)),
     'Favorited:', ...(have.favorited.length === 0 ? ['(none)'] : have.favorited.map(plugin => `- ${plugin.name}: ${describe(plugin, preferZh).slice(0, 160)}`)),
   ]
-  const user = [`Request: ${request}`, ...mine, '', 'Candidates:', ...found.candidates.map(({ plugin }, i) => catalogLine(plugin, i, registry, preferZh))].join('\n')
+  const user = [`Request: ${request}`, ...mine, '', 'Candidates:', ...candidateLines(found.candidates, registry, preferZh)].join('\n')
   return { system, user }
 }
 
 /** Pull the JSON object out of a model reply (it may wrap it in a code fence). */
-export function parsePickReply(text: string, allowed: Set<string>, max = 5): { intro: string; picks: Array<{ name: string; why: string }> } {
+export function parsePickReply(text: string, allowed: ReadonlySet<string>, max = 5): { intro: string; picks: Array<{ id: string; why: string }> } {
   const start = text.indexOf('{'), end = text.lastIndexOf('}')
   let value: { intro?: unknown; picks?: unknown } | null = null
   if (start >= 0 && end > start) {
@@ -264,20 +276,20 @@ export function parsePickReply(text: string, allowed: Set<string>, max = 5): { i
   }
   if (value === null) {
     // A reply cut off at the token limit (or with a stray character) still
-    // names its picks: take every complete {"name": ..., "why": ...} in order.
-    const found = [...text.matchAll(/"name"\s*:\s*"((?:[^"\\]|\\.)*)"(?:\s*,\s*"why"\s*:\s*"((?:[^"\\]|\\.)*)")?/gu)]
+    // identifies its picks: keep every complete candidate ID in order.
+    const found = [...text.matchAll(/"id"\s*:\s*"(p\d+)"(?:\s*,\s*"why"\s*:\s*"((?:[^"\\]|\\.)*)")?/gu)]
     if (found.length === 0) throw new Error('the model did not return JSON')
     const intro = /"intro"\s*:\s*"((?:[^"\\]|\\.)*)"/u.exec(text)?.[1] ?? ''
-    value = { intro, picks: found.map(match => ({ name: match[1], why: match[2] ?? '' })) }
+    value = { intro, picks: found.map(match => ({ id: match[1], why: match[2] ?? '' })) }
   }
-  const picks: Array<{ name: string; why: string }> = []
+  const picks: Array<{ id: string; why: string }> = []
   const seen = new Set<string>()
   if (Array.isArray(value.picks)) {
     for (const item of value.picks) {
-      const name = typeof item?.name === 'string' ? item.name.trim() : ''
-      if (!allowed.has(name) || seen.has(name)) continue
-      seen.add(name)
-      picks.push({ name, why: typeof item?.why === 'string' ? item.why.trim().slice(0, 300) : '' })
+      const id = typeof item?.id === 'string' ? item.id.trim() : ''
+      if (!allowed.has(id) || seen.has(id)) continue
+      seen.add(id)
+      picks.push({ id, why: typeof item?.why === 'string' ? item.why.trim().slice(0, 300) : '' })
       if (picks.length === max) break
     }
   }
@@ -310,7 +322,7 @@ function toPick(plugin: RegistryPlugin, registry: Registry, preferZh: boolean, w
 const hasModel = (llm: LlmLike | undefined, selection: ModelSelectionLike | undefined): selection is ModelSelectionLike =>
   llm !== undefined && selection !== undefined && Boolean(selection.provider) && Boolean(selection.model)
 
-/** One model call over the candidates; the reply parsed to names that were offered. */
+/** One model call over the candidates; resolve picks only to the entries offered. */
 async function askForPicks(options: {
   llm: LlmLike
   selection: ModelSelectionLike
@@ -361,17 +373,17 @@ async function askForPicks(options: {
     const reason = error instanceof Error ? error.message : String(error)
     throw new FindPluginError('model-failed', `模型这次没有回答（${reason}）。请稍后重试，或换一个模型。 / The model did not answer (${reason}). Try again, or switch models.`)
   }
+  const byId = new Map(options.candidates.map(({ plugin }, index) => [candidateId(index), plugin]))
   let parsed: ReturnType<typeof parsePickReply>
   try {
-    const allowed = new Set(options.candidates.map(item => item.plugin.name))
+    const allowed = new Set(byId.keys())
     // Out of budget before the answer: the thinking often already holds it.
     parsed = text.trim() === '' && reasoning !== '' ? parsePickReply(reasoning, allowed, options.max) : parsePickReply(text, allowed, options.max)
   } catch {
     logEvent('warn', 'find-plugin', `unreadable model reply (${String(text.length)} chars, ${String(reasoning.length)} thinking): ${text.slice(0, 300)} … ${text.slice(-200)} | chunks: ${seen.join(' ')}`)
     throw new FindPluginError('model-failed', '模型的回答格式不对，没法整理成结果。请重试一次。 / The model\'s answer was not in the expected shape. Try again.')
   }
-  const byName = new Map(options.candidates.map(item => [item.plugin.name, item.plugin]))
-  return { intro: parsed.intro, picks: parsed.picks.map(({ name, why }) => ({ plugin: byName.get(name)!, why })) }
+  return { intro: parsed.intro, picks: parsed.picks.map(({ id, why }) => ({ plugin: byId.get(id)!, why })) }
 }
 
 /** Recall, then let the model pick. Throws FindPluginError with a user-facing message. */
@@ -396,7 +408,7 @@ export async function findPlugins(options: {
   })
   const preferZh = /\p{Script=Han}/u.test(request)
   const picks = answer.picks.map(({ plugin, why }) => toPick(plugin, registry, preferZh, why))
-  return { request, intro: answer.intro, picks, model: selection.model, at: new Date().toISOString(), personalized: have !== undefined }
+  return { request, intro: answer.intro, picks, model: selection.model, at: new Date().toISOString(), selectionVersion: 2, personalized: have !== undefined }
 }
 
 // ---------- recommendations from what the user already has ----------
@@ -461,18 +473,18 @@ export function recommendCandidates(registry: Registry, seeds: RegistryPlugin[],
 export function buildRecommendPrompt(registry: Registry, seeds: UserSeeds, candidates: Candidate[], preferZh: boolean): { system: string; user: string } {
   const system = [
     'You recommend plugins from the DSH plugin market to one user, based on the plugins they already installed and favorited. Answer ONLY with one JSON object, no prose around it:',
-    '{"intro": string, "picks": [{"name": string, "why": string}]}',
-    `- picks: ${String(RECOMMEND_MAX - 4)} to ${String(RECOMMEND_MAX)} candidates this user is most likely to want next, best first. Use names exactly as listed; never a name that is not in the list.`,
+    '{"intro": string, "picks": [{"id": string, "why": string}]}',
+    `- picks: ${String(RECOMMEND_MAX - 4)} to ${String(RECOMMEND_MAX)} candidates this user is most likely to want next, best first. Use the candidate IDs (e.g. "p1") exactly as listed. Different entries may share a name.`,
     '- Read what they have as a picture of how they use DSH. Prefer plugins that add something they do not have yet, or go well with what they have; skip near-duplicates of plugins they already have.',
     '- Spread the picks over different needs rather than many plugins for one need. A well-used, maintained plugin beats an obscure one when both fit.',
     '- why: one short sentence. intro: one short sentence on what you read from their plugins.',
     `- Write intro and why in ${preferZh ? 'Simplified Chinese' : 'English'}.`,
   ].join('\n')
-  const list = (plugins: RegistryPlugin[]): string[] => plugins.length === 0 ? ['(none)'] : plugins.map((plugin, i) => catalogLine(plugin, i, registry, preferZh))
+  const list = (plugins: RegistryPlugin[]): string[] => plugins.length === 0 ? ['(none)'] : plugins.map((plugin, i) => `${i + 1}. ${catalogLine(plugin, registry, preferZh)}`)
   const user = [
     'Installed:', ...list(seeds.installed), '',
     'Favorited (not necessarily installed):', ...list(seeds.favorited), '',
-    'Candidates:', ...candidates.map(({ plugin }, i) => catalogLine(plugin, i, registry, preferZh)),
+    'Candidates:', ...candidateLines(candidates, registry, preferZh),
   ].join('\n')
   return { system, user }
 }
@@ -502,7 +514,7 @@ export async function recommendPlugins(options: {
     max: RECOMMEND_MAX, maxTokens: 8000, ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   const picks = answer.picks.map(({ plugin, why }) => toPick(plugin, registry, preferZh, why))
-  return { request: '', intro: answer.intro, picks, model: selection.model, at: new Date().toISOString() }
+  return { request: '', intro: answer.intro, picks, model: selection.model, at: new Date().toISOString(), selectionVersion: 2 }
 }
 
 /** Plain text of a result, for hosts that draw the command row as text. */

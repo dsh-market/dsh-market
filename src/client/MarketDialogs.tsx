@@ -40,7 +40,7 @@ type MarketDialogsCtx = { props: MarketSectionProps }
     'favoriteError' | 'favoriteErrorDone' | 'findingCompat' | 'gistBusy' | 'groups' |
     'hostCompatHeld' | 'hostCompatHeldHours' | 'hostCompatWindowHours' | 'hostIncompatible' |
     'installed' | 'lang' | 'lightbox' | 'migrationConfirm' | 'notesFor' | 'notesState' |
-    'openLightbox' | 'pendingBackup' | 'profileName' | 'recovery' | 'recoveryBusy' | 'recoveryKeep' |
+    'openLightbox' | 'openPluginUnavailable' | 'openPluginUnavailableDone' | 'pendingBackup' | 'profileName' | 'recovery' | 'recoveryBusy' | 'recoveryKeep' |
     'recoveryOpen' | 'removeConfirm' | 'removingName' | 'renamingGroup' | 'renamingValue' |
     'restoreBlocked' | 'restoreConfirm' | 'restoreConfirmOpen' | 'setAddPanel' | 'setAddQuery' |
     'setAddSelected' | 'setAgentsConfirm' | 'setCmdOpen' | 'setCommentsFor' | 'setCompatRetry' |
@@ -73,7 +73,7 @@ export function MarketDialogs({ c }: { c: MarketDialogsCtx }) {
     exportOptions, exportSelection, exportState, exportToastDone, favoriteError, favoriteErrorDone,
     findingCompat, gistBusy, groups, hostCompatHeld, hostCompatHeldHours, hostCompatWindowHours,
     hostIncompatible, installed, installedThemeNames, labelledCheckbox, lang, lightbox,
-    migrationConfirm, notesFor, notesState, openLightbox, pendingBackup, profileName, recovery,
+    migrationConfirm, notesFor, notesState, openLightbox, openPluginUnavailable, openPluginUnavailableDone, pendingBackup, profileName, recovery,
     recoveryBusy, recoveryKeep, recoveryOpen, removeConfirm, removingName, renamingGroup,
     renamingValue, replacementOf, restoreBlocked, restoreConfirm, restoreConfirmOpen, runGist,
     scrollToTop, setAddPanel, setAddQuery, setAddSelected, setAgentsConfirm, setCmdOpen,
@@ -715,6 +715,9 @@ export function MarketDialogs({ c }: { c: MarketDialogsCtx }) {
       )}
       {favoriteError !== null && (
         <Toast text={localizeBilingual(favoriteError, lang)} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
+      )}
+      {openPluginUnavailable && (
+        <Toast text={t('fpOpenUnavailable')} icon={<IconWarningOutline16 size={14} />} onDone={openPluginUnavailableDone} />
       )}
       {blockError !== null && (
         <Toast text={localizeBilingual(blockError, lang)} icon={<IconWarningOutline16 size={14} />} onDone={blockErrorDone} />

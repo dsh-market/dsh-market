@@ -38,6 +38,7 @@ export interface FindResult {
   picks: FindPick[]
   model: string
   at?: string
+  selectionVersion?: 2
   /** The user's installed and favorited plugins informed the picks (they allowed it). */
   personalized?: boolean
 }
@@ -52,8 +53,8 @@ interface CommandNodeLike {
 const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
 /** Take the user to the market tab; the market opens the dialog when it mounts. */
-export async function goToMarket(name: string, navigation: HostNavigationStore | undefined, doc: Document = document): Promise<boolean> {
-  requestOpenPlugin(name)
+export async function goToMarket(url: string, navigation: HostNavigationStore | undefined, doc: Document = document): Promise<boolean> {
+  requestOpenPlugin(url)
   const nav = navigation?.get()
   if (nav?.openList === undefined) return false
   nav.openList()
@@ -72,16 +73,16 @@ type InstallState =
   | { phase: 'done'; text: string }
   | { phase: 'failed'; text: string }
 
-function PickCard({ pick, index, t, navigation, onOpen }: { pick: FindPick; index: number; t: Translate; navigation?: HostNavigationStore; onOpen?: (name: string) => void }): ReactElement {
+function PickCard({ pick, index, t, navigation, onOpen, canInstall }: { pick: FindPick; index: number; t: Translate; navigation?: HostNavigationStore; onOpen?: (url: string) => void; canInstall: boolean }): ReactElement {
   const [install, setInstall] = useState<InstallState>({ phase: 'idle' })
   const [copied, setCopied] = useState(false)
   const [navFailed, setNavFailed] = useState(false)
 
   const onMarket = useCallback(() => {
     // Already on the market page: just open the dialog.
-    if (onOpen !== undefined) { onOpen(pick.name); return }
-    void goToMarket(pick.name, navigation).then(ok => { if (!ok) setNavFailed(true) })
-  }, [navigation, onOpen, pick.name])
+    if (onOpen !== undefined) { onOpen(pick.url); return }
+    void goToMarket(pick.url, navigation).then(ok => { if (!ok) setNavFailed(true) })
+  }, [navigation, onOpen, pick.url])
 
   const onInstall = useCallback(() => {
     setInstall({ phase: 'working' })
@@ -107,7 +108,7 @@ function PickCard({ pick, index, t, navigation, onOpen }: { pick: FindPick; inde
     })
   }, [pick.install])
 
-  const meta = [pick.categories.join(' / '), pick.downloads !== null ? `${t('fpDownloads')} ${formatCount(pick.downloads)}` : ''].filter(Boolean).join(' · ')
+  const meta = [pick.owner, pick.categories.join(' / '), pick.downloads !== null ? `${t('fpDownloads')} ${formatCount(pick.downloads)}` : ''].filter(Boolean).join(' · ')
   return (
     <div className={css.fpCard} data-dshm-find-pick={pick.name}>
       <OwnerAvatar name={pick.name} owner={pick.owner} className={css.fpAvatar} />
@@ -117,9 +118,10 @@ function PickCard({ pick, index, t, navigation, onOpen }: { pick: FindPick; inde
           {meta !== '' && <span className={css.fpMeta}>{meta}</span>}
         </div>
         <div className={css.fpWhy}>{pick.why || pick.description}</div>
-        {install.phase === 'confirm' && (
+        {canInstall && install.phase === 'confirm' && (
           <div className={css.fpConfirm}>
             <span>{t('fpConfirm').replace('{0}', pick.name)}</span>
+            <span className={css.fpSource}>{pick.npm ?? pick.url}</span>
             <Button size="sm" variant="primary" onClick={onInstall}>{t('fpConfirmInstall')}</Button>
             <Button size="sm" variant="outline" onClick={() => setInstall({ phase: 'idle' })}>{t('cancel')}</Button>
           </div>
@@ -129,13 +131,13 @@ function PickCard({ pick, index, t, navigation, onOpen }: { pick: FindPick; inde
         {install.phase === 'failed' && <div className={css.fpNote} data-tone="error">{install.text}</div>}
         {navFailed && <div className={css.fpNote}>{t('fpOpenManually')}</div>}
       </div>
-      <div className={css.fpActions}>
+      {canInstall && <div className={css.fpActions}>
         <div className={css.fpButtons}>
           <Button size="sm" variant="primary" onClick={onMarket}>{t('fpOpenMarket')}</Button>
           <Button size="sm" variant="outline" disabled={install.phase === 'working' || install.phase === 'done'} onClick={() => setInstall({ phase: 'confirm' })}>{t('fpInstallHere')}</Button>
         </div>
         <button type="button" className={css.fpCopy} onClick={onCopy}>{copied ? t('fpCopied') : t('fpCopy')}</button>
-      </div>
+      </div>}
     </div>
   )
 }
@@ -172,16 +174,18 @@ export function UseMyPluginsNote({ personalized, t }: { personalized: boolean; t
   )
 }
 
-/** The picks, drawn the same way in the chat and in the market's AI search. */
-export function FindResultView({ result, t, navigation, onOpen }: { result: FindResult; t: Translate; navigation?: HostNavigationStore; onOpen?: (name: string) => void }): ReactElement {
+/** The picks shared by the chat row and the blank-session overlay. */
+export function FindResultView({ result, t, navigation, onOpen }: { result: FindResult; t: Translate; navigation?: HostNavigationStore; onOpen?: (url: string) => void }): ReactElement {
+  const canInstall = result.selectionVersion === 2
   return (
     <div className={css.fpRoot}>
       {result.intro !== '' && <p className={css.fpIntro}>{result.intro}</p>}
       {result.picks.length > 0 && (
         <div className={css.fpList}>
-          {result.picks.map((pick, i) => <PickCard key={pick.name} pick={pick} index={i} t={t} navigation={navigation} onOpen={onOpen} />)}
+          {result.picks.map((pick, i) => <PickCard key={pick.url} pick={pick} index={i} t={t} navigation={navigation} onOpen={onOpen} canInstall={canInstall} />)}
         </div>
       )}
+      {!canInstall && result.picks.length > 0 && <p className={css.fpNote}>{t('fpSearchAgain')}</p>}
       <p className={css.fpFoot}>{t('fpFoot')}</p>
       <UseMyPluginsNote personalized={result.personalized === true} t={t} />
     </div>
@@ -258,9 +262,9 @@ export function FindPluginOverlay({ t, navigation }: { t: Translate; navigation?
     return () => window.removeEventListener('keydown', onKey, true)
   }, [request])
   if (request === null) return null
-  const go = (name: string): void => {
+  const go = (url: string): void => {
     closeOverlay()
-    void goToMarket(name, navigation)
+    void goToMarket(url, navigation)
   }
   return (
     <div className={css.fpOverlay} onClick={closeOverlay} data-dshm-find-overlay>

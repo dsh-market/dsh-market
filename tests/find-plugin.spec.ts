@@ -76,14 +76,28 @@ function fakeModel(reply: string | Error): LlmLike & { calls: Array<{ system?: s
 const SELECTION = { provider: 'deepseek-official', model: 'deepseek-chat' }
 
 describe('/find-plugin: the model picks', () => {
-  it('keeps only names that were offered, in the model\'s order, at most five', () => {
-    const allowed = new Set(['a', 'b', 'c'])
-    const parsed = parsePickReply('```json\n{"intro":"ok","picks":[{"name":"b","why":"fits"},{"name":"zzz","why":"made up"},{"name":"a","why":"also"},{"name":"b","why":"dup"}]}\n```', allowed)
-    expect(parsed).toEqual({ intro: 'ok', picks: [{ name: 'b', why: 'fits' }, { name: 'a', why: 'also' }] })
+  it('preserves the selected repository when two candidates share a name (#1290)', async () => {
+    const first = { ...plugin('dsh-prompt-polish', '润色提示词', 'Polish prompts', 'docs', 200), owner: 'alice', url: 'https://github.com/alice/dsh-prompt-polish', npm: '@alice/dsh-prompt-polish', install: 'dsh plugin add @alice/dsh-prompt-polish' }
+    const second = { ...first, owner: 'bob', url: 'https://github.com/bob/dsh-prompt-polish', npm: '@bob/dsh-prompt-polish', install: 'dsh plugin add @bob/dsh-prompt-polish', downloads: 50 }
+    const llm = fakeModel(JSON.stringify({ picks: [{ id: 'p1', name: first.name, why: "Alice's npm package" }, { id: 'p2', name: second.name, why: "Bob's npm package" }] }))
+    const result = await findPlugins({ request: first.name, registry: { ...registry, count: 2, plugins: [first, second] }, llm, selection: SELECTION })
+    expect(result.picks).toEqual([
+      expect.objectContaining({ url: first.url, npm: first.npm, owner: first.owner, why: "Alice's npm package" }),
+      expect.objectContaining({ url: second.url, npm: second.npm, owner: second.owner, why: "Bob's npm package" }),
+    ])
+    const prompt = JSON.stringify(llm.calls[0].messages)
+    expect(prompt).toContain('[p1] (alice / @alice/dsh-prompt-polish)')
+    expect(prompt).toContain('[p2] (bob / @bob/dsh-prompt-polish)')
+  })
+
+  it('keeps offered IDs in model order, skipping unknown IDs, duplicates and bare names', () => {
+    const allowed = new Set(['p1', 'p2', 'p3'])
+    const parsed = parsePickReply('```json\n{"intro":"ok","picks":[{"id":"p2","why":"fits"},{"id":"p99","why":"made up"},{"name":"dsh-prompt-polish","why":"ambiguous"},{"id":"p1","why":"also"},{"id":"p2","why":"dup"}]}\n```', allowed)
+    expect(parsed).toEqual({ intro: 'ok', picks: [{ id: 'p2', why: 'fits' }, { id: 'p1', why: 'also' }] })
   })
 
   it('asks the user\'s model with the request and candidates, and returns card-ready picks', async () => {
-    const llm = fakeModel('{"intro":"找到 1 个","picks":[{"name":"callai-seo-mcp","why":"专门做 SEO 写作"}]}')
+    const llm = fakeModel('{"intro":"找到 1 个","picks":[{"id":"p1","why":"专门做 SEO 写作"}]}')
     const result = await findPlugins({ request: '找找 seo 优化写作的插件', registry, llm, selection: SELECTION })
     expect(llm.calls[0]).toMatchObject(SELECTION)
     expect(JSON.stringify(llm.calls[0].messages)).toContain('callai-seo-mcp')
@@ -114,10 +128,10 @@ describe('/find-plugin: the command', () => {
   })
 
   it('answers with readable text and keeps the structured picks for the card, under the command id', async () => {
-    const llm = fakeModel('{"intro":"这个最合适","picks":[{"name":"dsh-notify-me","why":"任务完成就提醒"}]}')
+    const llm = fakeModel('{"intro":"这个最合适","picks":[{"id":"p2","why":"任务完成就提醒"}]}')
     const result = await runFindPlugin(invocation('通知类型的插件'), async () => registry, { llm: () => llm, defaultSelection: () => undefined })
     expect(result).toEqual({ kind: 'success', text: expect.stringContaining('dsh-notify-me — 任务完成就提醒') })
-    expect(resultFor('cmd-1')?.picks.map(pick => pick.name)).toEqual(['dsh-notify-me'])
+    expect(resultFor('cmd-1')).toMatchObject({ selectionVersion: 2, picks: [{ name: 'dsh-notify-me' }] })
     expect(llm.calls).toHaveLength(1)
     expect(llm.calls[0]).not.toHaveProperty('temperature')
     expect(llm.calls[0]).not.toHaveProperty('reasoningEffort')
@@ -175,7 +189,7 @@ describe('AI recommendations from what the user has', () => {
   })
 
   it('sends the user\'s plugins with the candidates, and keeps up to ten offered picks', async () => {
-    const llm = fakeModel('{"intro":"你常用通知","picks":[{"name":"dsh-qqbot","why":"同类"},{"name":"dsh-notify-me","why":"已装"}]}')
+    const llm = fakeModel('{"intro":"你常用通知","picks":[{"id":"p1","why":"同类"},{"id":"p99","why":"不在候选里"}]}')
     const result = await recommendPlugins({ registry, installed: ['dsh-notify-me'], favorites: [], preferZh: true, llm, selection: SELECTION })
     expect(JSON.stringify(llm.calls[0].messages)).toMatch(/Installed:[\s\S]*dsh-notify-me[\s\S]*Candidates:/)
     expect(result.picks.map(p => p.name)).toEqual(['dsh-qqbot'])
@@ -196,7 +210,7 @@ describe('/find-plugin and AI search with the user\'s plugins', () => {
 
   it('reads nothing of the user\'s until they allow it, and says so on the result', async () => {
     expect(usesMyPlugins()).toBe(false)
-    const llm = fakeModel('{"intro":"","picks":[{"name":"dsh-notify-me","why":"x"}]}')
+    const llm = fakeModel('{"intro":"","picks":[{"id":"p2","why":"x"}]}')
     await run(llm)
     expect(JSON.stringify(llm.calls[0].messages)).not.toContain('Already installed')
     expect(resultFor('c')?.personalized).toBe(false)
@@ -205,7 +219,7 @@ describe('/find-plugin and AI search with the user\'s plugins', () => {
   it('once allowed, leaves installed plugins out and tells the model what the user has', async () => {
     setUsesMyPlugins(true)
     expect(usesMyPlugins()).toBe(true)
-    const llm = fakeModel('{"intro":"","picks":[{"name":"dsh-qqbot","why":"x"}]}')
+    const llm = fakeModel('{"intro":"","picks":[{"id":"p1","why":"x"}]}')
     await run(llm)
     const sent = JSON.stringify(llm.calls[0].messages)
     expect(sent).toMatch(/Already installed:[\s\S]*dsh-notify-me/)
@@ -218,8 +232,8 @@ describe('/find-plugin and AI search with the user\'s plugins', () => {
 
 describe('/find-plugin: a reply cut off mid-way', () => {
   it('keeps the complete picks before the cut', () => {
-    const cut = '{"intro":"ok","picks":[{"name":"a","why":"one"},{"name":"b","why":"two"},{"name":"c","wh'
-    expect(parsePickReply(cut, new Set(['a', 'b', 'c']), 10)).toEqual({ intro: 'ok', picks: [{ name: 'a', why: 'one' }, { name: 'b', why: 'two' }, { name: 'c', why: '' }] })
+    const cut = '{"intro":"ok","picks":[{"id":"p1","why":"one"},{"id":"p2","why":"two"},{"id":"p3","wh'
+    expect(parsePickReply(cut, new Set(['p1', 'p2', 'p3']), 10)).toEqual({ intro: 'ok', picks: [{ id: 'p1', why: 'one' }, { id: 'p2', why: 'two' }, { id: 'p3', why: '' }] })
   })
 })
 
@@ -261,7 +275,7 @@ describe('/find-plugin: a thinking model', () => {
   })
 
   it('takes the answer from the thinking when the budget ran out before the reply', async () => {
-    const llm: LlmLike = { stream: () => (async function* () { yield { type: 'reasoning-delta', text: 'so: {"intro":"","picks":[{"name":"callai-seo-mcp","why":"fits"}]}' } })() }
+    const llm: LlmLike = { stream: () => (async function* () { yield { type: 'reasoning-delta', text: 'so: {"intro":"","picks":[{"id":"p1","why":"fits"}]}' } })() }
     const result = await findPlugins({ request: 'seo', registry, llm, selection: SELECTION })
     expect(result.picks.map(p => p.name)).toEqual(['callai-seo-mcp'])
   })

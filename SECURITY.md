@@ -74,8 +74,8 @@ browser, and never carries a path, a plugin list, a hostname or a username.
 These call the model **you** configured in DSH, through DSH's own model
 service, with your API key; the market runs no model and has no server of its
 own in this path. What goes to that model: your request, and short catalog
-entries (name, categories, description, download and star counts) for the
-candidates.
+entries (name, author, npm package name when available, categories, description,
+download and star counts) for the candidates.
 
 Your installed and favorited plugins (names and descriptions) are added only
 in two cases: when you click *Let AI guess what you'd like*, for that one
