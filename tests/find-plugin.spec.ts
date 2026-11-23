@@ -118,6 +118,9 @@ describe('/find-plugin: the command', () => {
     const result = await runFindPlugin(invocation('通知类型的插件'), async () => registry, { llm: () => llm, defaultSelection: () => undefined })
     expect(result).toEqual({ kind: 'success', text: expect.stringContaining('dsh-notify-me — 任务完成就提醒') })
     expect(resultFor('cmd-1')?.picks.map(pick => pick.name)).toEqual(['dsh-notify-me'])
+    expect(llm.calls).toHaveLength(1)
+    expect(llm.calls[0]).not.toHaveProperty('temperature')
+    expect(llm.calls[0]).not.toHaveProperty('reasoningEffort')
   })
 
   it('uses the default model when the chat does not name one', async () => {
@@ -235,12 +238,26 @@ describe('/find-plugin: a call the host ends with an error finish', () => {
 })
 
 describe('/find-plugin: a thinking model', () => {
-  it('asks a model with an effort setting to think little, and leaves "off" off', async () => {
-    const llm = fakeModel('{"intro":"","picks":[]}')
-    await findPlugins({ request: 'seo', registry, llm, selection: { ...SELECTION, reasoningEffort: 'high' } })
-    await findPlugins({ request: 'seo', registry, llm, selection: { ...SELECTION, reasoningEffort: 'off' } })
-    await findPlugins({ request: 'seo', registry, llm, selection: SELECTION })
-    expect(llm.calls.map(call => (call as { reasoningEffort?: string }).reasoningEffort)).toEqual(['low', 'off', undefined])
+  it.each([
+    { provider: 'openai', model: 'gpt-6.1-sol', reasoningEffort: 'medium' },
+    { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'off' },
+    { provider: 'custom-gateway', model: 'model-alias' },
+  ])('lets DSH apply model defaults for $provider', async selection => {
+    const llm = fakeModel('{"intro":"","picks":[{"name":"callai-seo-mcp","why":"fits"}]}')
+    const search = await findPlugins({ request: 'seo', registry, llm, selection })
+    const recommendations = await recommendPlugins({
+      registry, llm, selection, installed: ['dsh-notify-me'], favorites: [], preferZh: false,
+    })
+    expect(search.picks.map(pick => pick.name)).toEqual(['callai-seo-mcp'])
+    expect(recommendations.picks.map(pick => pick.name)).toEqual(['callai-seo-mcp'])
+    expect(llm.calls).toHaveLength(2)
+    const { provider, model } = selection
+    expect(llm.calls[0]).toMatchObject({ provider, model, maxTokens: 6000 })
+    expect(llm.calls[1]).toMatchObject({ provider, model, maxTokens: 8000 })
+    for (const call of llm.calls) {
+      expect(call).not.toHaveProperty('temperature')
+      expect(call).not.toHaveProperty('reasoningEffort')
+    }
   })
 
   it('takes the answer from the thinking when the budget ran out before the reply', async () => {
