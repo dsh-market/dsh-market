@@ -835,6 +835,28 @@ export function readLockCommits(profile: string, explicitDir?: string): Map<stri
 }
 
 /**
+ * The repository key and commit an archive tarball URL names, or null for a
+ * URL none of the supported hosts serves.
+ *
+ * The same shapes `readLockCommits` scans for, applied to one URL: a
+ * `resolution:` block records the archive it fetched, and that URL is the
+ * only place the commit appears in it.
+ */
+function archiveIdentityOf(url: string): { key: string, commit: string } | null {
+  for (const shape of ARCHIVE_COMMIT_SHAPES) {
+    // These patterns are global for `matchAll` above; `exec` advances
+    // `lastIndex`, so both ends are reset rather than shared.
+    shape.lastIndex = 0
+    const m = shape.exec(url)
+    shape.lastIndex = 0
+    if (m === null) continue
+    const host = m[1]!.toLowerCase() === 'codeload.github.com' ? 'github.com' : m[1]!.toLowerCase()
+    return { key: `${host}/${archivePath(m[2]!).toLowerCase()}`, commit: m[3]!.toLowerCase() }
+  }
+  return null
+}
+
+/**
  * Commit recorded for a non-codeload git resolution (`type: git` in pnpm's
  * lockfile). Matched against the install spec so a Gitea/GitLab URL can
  * compare HEAD without mistaking a same-named npm package (#525).
@@ -843,6 +865,16 @@ export function readLockCommits(profile: string, explicitDir?: string): Map<stri
  * by pnpm's `path:` selector, so the spec's subpath has to match too — and
  * when the spec names no subpath while several entries of that remote do,
  * there is no answer rather than the first sibling's commit (#632).
+ *
+ * A `type: git` block is not the only shape: every host the market supports
+ * resolves its install to an archive of that host, whose resolution carries
+ * `gitHosted: true`, the commit inside `tarball:` and the subpackage in
+ * `path:` — no `commit:` and no `repo:` (#632, #637). Reading only the git
+ * block left a monorepo subpackage with no identity of its own, so callers
+ * fell back to `readLockCommits`, which keeps one slot per repository: with
+ * any sibling still on an older commit, that sibling answered for every
+ * subpackage, and an update that really happened was reported as STALE
+ * (#1296).
  *
  * The key on both sides of the comparison is `hostedRepoKey`, the identity
  * the rest of the market already compares specs by (#851). This function
@@ -872,14 +904,29 @@ export function readGitResolutionCommit(
       const body = m[1]!
       const commit = /\bcommit:\s*([0-9a-f]{40})\b/i.exec(body)
       const repo = /\brepo:\s*([^\s,}]+)/.exec(body)
-      if (commit === null || repo === null) continue
-      if (hostedRepoKey(repo[1]!) !== want) continue
-      const entryPath = /\bpath:\s*([^\s,}]+)/.exec(body)?.[1]?.replace(/^\/+|\/+$/g, '').toLowerCase() ?? null
+      let recorded: string | null = null
+      let fromArchive = false
+      if (commit !== null && repo !== null) {
+        if (hostedRepoKey(repo[1]!) === want) recorded = commit[1]!.toLowerCase()
+      } else {
+        const archive = archiveIdentityOf(/\btarball:\s*([^,}]+)/.exec(body)?.[1].trim() ?? '')
+        if (archive !== null && archive.key === want) {
+          recorded = archive.commit
+          fromArchive = true
+        }
+      }
+      if (recorded === null) continue
+      const rawPath = /\bpath:\s*([^\s,}]+)/.exec(body)?.[1]
+      const entryPath = rawPath === undefined ? null : rawPath.replace(/^\/+|\/+$/g, '').toLowerCase() || null
       if (wantPath !== null) {
-        if (entryPath === wantPath) return commit[1]!.toLowerCase()
+        if (entryPath === wantPath) return recorded
         continue
       }
-      matches.push(commit[1]!.toLowerCase())
+      // An archive entry is one subpackage, named by its `path:`. A spec that
+      // names no subpath is that repository's root, not the sibling pnpm
+      // happened to list last.
+      if (fromArchive && entryPath !== null) continue
+      matches.push(recorded)
     }
   } catch { /* no lockfile */ }
   // Exactly one entry for this remote is an identity; several are siblings
