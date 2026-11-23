@@ -79,6 +79,31 @@ describe('the gate is the host connection service\'s own, read per request', () 
     expect(refuseUnadmitted(request, response() as never)).toBe(false)
   })
 
+  it('uses connection.admit when the host no longer has requestRejection (#1289)', () => {
+    const seen: Array<{ url: string; method: string }> = []
+    const connection = {
+      mode: 'reject' as 'reject' | 'allow',
+      admit(this: { mode: string }, facts: { url: string; method: string }) {
+        seen.push(facts)
+        return this.mode === 'allow' ? { peer: {} } : { rejection: 401 }
+      },
+    }
+    restores.push(useTrustedHosts(contextWith({ connection })))
+    const res = response()
+    expect(refuseUnadmitted({ ...request, url: '/dsh-market/status', headers: { host: 'localhost:8080' }, method: 'GET', socket: {} } as never, res as never)).toBe(true)
+    expect(res.sent.status).toBe(401)
+    expect(seen[0]).toMatchObject({ url: 'http://localhost:8080/dsh-market/status', method: 'GET' })
+    connection.mode = 'allow'
+    expect(refuseUnadmitted(request, response() as never)).toBe(false)
+  })
+
+  it('refuses when admit throws or answers nothing, instead of letting the request through', () => {
+    restores.push(useTrustedHosts(contextWith({ connection: { admit: () => undefined } })))
+    const res = response()
+    expect(refuseUnadmitted(request, res as never)).toBe(true)
+    expect(res.sent.status).toBe(403)
+  })
+
   it('goes back to the previous source when its effect is disposed', () => {
     const restore = useTrustedHosts(contextWith({ connection: { requestRejection: () => 401 } }))
     expect(refuseUnadmitted(request, response() as never)).toBe(true)

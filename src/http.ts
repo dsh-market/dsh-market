@@ -64,6 +64,19 @@ export function setRequestGateSource(source: () => HostRequestGate | undefined):
 }
 
 /**
+ * The request as `connection.admit` reads it: headers, the socket, and an
+ * absolute `url` — what the host's own `webserver/authorize` hands the same
+ * check (the incoming request's `url` is only a path).
+ */
+export function admissionFacts(request: IncomingMessage): { method: string; headers: IncomingMessage['headers']; socket: IncomingMessage['socket']; url: string } {
+  const host = request.headers.host ?? 'localhost'
+  const scheme = (request.socket as { encrypted?: boolean } | undefined)?.encrypted === true ? 'https' : 'http'
+  let url: string
+  try { url = new URL(request.url ?? '/', `${scheme}://${host}`).href } catch { url = `${scheme}://localhost/` }
+  return { method: request.method ?? 'GET', headers: request.headers, socket: request.socket, url }
+}
+
+/**
  * Answer the request with the host's rejection, if it has one.
  * @returns true when the request was refused and answered here.
  */
@@ -82,7 +95,9 @@ export function refuseUnadmitted(request: IncomingMessage, response: ServerRespo
   sendJson(response, status, {
     error: status === 401
       ? '需要先登录 DSH：请重新打开 dsh web 启动时打印的那个网址。 / DSH login required: reopen the URL dsh web printed at startup.'
-      : '这个请求来自不受信任的地址，已拒绝。 / This request came from an untrusted origin and was refused.',
+      : status === 503
+        ? 'DSH 的登录检查暂时出错，请稍后重试。 / DSH\'s login check failed for now. Try again in a moment.'
+        : '这个请求来自不受信任的地址，已拒绝。 / This request came from an untrusted origin and was refused.',
   })
   return true
 }

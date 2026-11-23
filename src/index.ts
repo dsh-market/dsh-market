@@ -9,7 +9,7 @@ import { dirname, isAbsolute } from 'node:path'
 import { createDesktopPluginRuntime, setHostPackageManager, type DesktopPnpmLike, type HostPackageManager } from './dsh-cli.ts'
 import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from './official-desktop.ts'
 import { isDshProfileName, profileDir } from './profile.ts'
-import { setRequestGateSource, setTrustedHostsSource } from './http.ts'
+import { admissionFacts, setRequestGateSource, setTrustedHostsSource } from './http.ts'
 import { setLauncherInstallAnchorSource } from './dsh-install.ts'
 import { mountMarketRoutes, type HostPluginActivation, type MarketConfig, type MarketHost } from './routes.ts'
 import { installDesktopMarketSettings, installMarketSettings } from './settings.ts'
@@ -246,10 +246,21 @@ export function useTrustedHosts(ctx: Context): () => void {
   // its browser login, the check its own API runs. Read per request for the
   // same reason as the authorities above.
   const previousGate = setRequestGateSource(() => {
-    const connection = ctx.get('connection') as { requestRejection?: unknown } | undefined
+    const connection = ctx.get('connection') as { requestRejection?: unknown; admit?: unknown } | undefined
     const gate = connection?.requestRejection
-    return typeof gate === 'function'
-      ? (request => (gate as (request: unknown) => number | undefined).call(connection, request))
+    if (typeof gate === 'function') {
+      return request => (gate as (request: unknown) => number | undefined).call(connection, request)
+    }
+    // DSH 0.2.3 removed requestRejection for `admit(request)`: the Host/Origin
+    // fence, then the registered credential providers, answering `{ peer }` or
+    // `{ rejection: status }` (#1289). Without this the gate quietly became a
+    // no-op on those hosts.
+    const admit = connection?.admit
+    return typeof admit === 'function'
+      ? (request => {
+        const answer = (admit as (facts: unknown) => { rejection?: unknown } | undefined).call(connection, admissionFacts(request))
+        return typeof answer?.rejection === 'number' ? answer.rejection : answer === undefined ? 403 : undefined
+      })
       : undefined
   })
   // The setter returns the PREVIOUS source, not a restore closure — the same
