@@ -374,20 +374,7 @@ export async function openMarketPage(
   }
 }
 
-/**
- * Get to the market screen, whichever door this host version has.
- *
- * Up to 0.2.0 it is a section of the Settings dialog. DSH 0.2.1 removed that
- * dialog: the Plugins page carries the market's settings CARD, and the market
- * page opens from the sidebar row (#846), off by default — so this turns it
- * on the way a user would.
- *
- * Also clears the gates 0.2.1 puts in front of the app on a fresh profile —
- * the testing notice, the API-key prompt and the preview notes. Each covers
- * the whole app, Escape closes none of them, and every click behind them is
- * swallowed, so a gate this loop does not recognise stays up and the market
- * never opens (#1033).
- */
+// Dismiss the onboarding dialogs that cover the shell on a fresh host (#1033).
 const START_GATE_BUTTONS = /^(Close|关闭|Continue|继续|Configure later|稍后配置)$/
 
 export async function dismissStartGate(page: Page): Promise<void> {
@@ -404,8 +391,26 @@ export async function dismissStartGate(page: Page): Promise<void> {
   }
 }
 
-export async function openMarketUi(page: Page): Promise<void> {
+const MARKET_LABEL = /^(插件市场|Plugin Market)$/
+
+export async function enableMarketSettings(scaffold: Pick<WebScaffold, 'api' | 'baseUrl'>): Promise<void> {
+  const response = await scaffold.api('/dsh-market/entry-visibility', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: scaffold.baseUrl },
+    body: JSON.stringify({ settingsSection: true }),
+  })
+  if (!response.ok || (await response.json() as { settingsSection?: boolean }).settingsSection !== true) {
+    throw new Error(`could not enable the market Settings section in the test profile (HTTP ${response.status})`)
+  }
+}
+
+/** Open the optional Settings section only when the test needs that surface. */
+export async function openMarketSettings(page: Page): Promise<void> {
   await dismissStartGate(page)
+  await openSettingsSection(page)
+}
+
+async function openSettingsSection(page: Page): Promise<void> {
   const settings = page.getByRole('button', { name: /^(设置|Settings)$/ }).first()
   // A Chinese UI renders this entry as 账号菜单, not 账户菜单: counting
   // role=button on 0.2.1-rc.2 gave 1 and 0 respectively (#1033).
@@ -433,7 +438,7 @@ export async function openMarketUi(page: Page): Promise<void> {
   const dialogVisible = await dialog.waitFor({ state: 'visible', timeout: 15_000 })
     .then(() => true).catch(() => false)
   const scope = dialogVisible ? dialog : page
-  await scope.getByRole('button', { name: /插件市场|Plugin Market/ }).first().click()
+  await scope.getByRole('button', { name: MARKET_LABEL }).click()
   // That click is the first one a leftover gate swallows: the entry never
   // opens, and the failure lands later as an empty-catalog wait that reads
   // like the market is broken. Fail at the door instead (#1033). Scoped to the
@@ -443,7 +448,7 @@ export async function openMarketUi(page: Page): Promise<void> {
   // Presence only: the error boundary renders this attribute too, so a mounted
   // root says the market opened, not that its catalog loaded.
   const mounted = await scope.locator('[data-dsh-market-root]').first()
-    .waitFor({ state: 'attached', timeout: 15_000 })
+    .waitFor({ state: 'visible', timeout: 15_000 })
     .then(() => true).catch(() => false)
   if (!mounted) {
     const gateUp = await page.getByRole('button', { name: START_GATE_BUTTONS })
@@ -452,6 +457,39 @@ export async function openMarketUi(page: Page): Promise<void> {
       ? 'market root never mounted: a start gate is still up, so the click was swallowed (#1033)'
       : 'market root never mounted: the Plugin Market entry did not open the market')
   }
+}
+
+/** Use a visible market entry without changing the user's entry preferences (#1294). */
+export async function openMarketUi(page: Page): Promise<void> {
+  await dismissStartGate(page)
+  const panels = page.getByRole('navigation', { name: /^(Global panels|全局面板)$/ })
+  const sidebarMarket = panels.getByRole('button', { name: MARKET_LABEL })
+  const plugins = panels.getByRole('button', { name: /^(Plugins|插件)$/ })
+  // Hosts that only offer Settings never register either panel row. Allow the
+  // market's saved sidebar preference to load before opening a legacy dialog.
+  const panelReady = await sidebarMarket.or(plugins).first().waitFor({ state: 'visible', timeout: 5_000 })
+    .then(() => true, () => false)
+  if (!panelReady) {
+    await openSettingsSection(page)
+    return
+  }
+  if (await sidebarMarket.isVisible()) {
+    await sidebarMarket.click()
+    await page.locator('[data-dsh-market-root]:visible').waitFor()
+    return
+  }
+  await plugins.click()
+  const panel = page.locator('[data-plugin-panel]:visible')
+  await panel.and(page.locator('[aria-busy="false"]')).waitFor()
+  const marketTab = panel.getByRole('tab', { name: MARKET_LABEL })
+  if (!await marketTab.isVisible()) {
+    // Some hosts have a native Plugins page but no market tab. When the
+    // optional sidebar shortcut is off, Settings is still a valid entry.
+    await openSettingsSection(page)
+    return
+  }
+  await marketTab.click()
+  await panel.locator('[data-dsh-market-plugins-tab="true"]').waitFor({ state: 'visible' })
 }
 
 /**

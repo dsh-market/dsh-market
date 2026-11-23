@@ -15,7 +15,7 @@
 import { chromium } from 'playwright'
 import type { Browser, Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, launchMarketScaffold, openMarketPage, openMarketUi, waitMarketCatalog } from './scaffold.ts'
+import { dshAvailable, enableMarketSettings, launchMarketScaffold, openMarketPage, openMarketSettings, waitMarketCatalog } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 // `.sequential` like every other file in this suite: two market scaffolds at
@@ -25,6 +25,7 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: the market header in a nar
   let s: WebScaffold, browser: Browser, page: Page
   beforeAll(async () => {
     s = await launchMarketScaffold()
+    await enableMarketSettings(s)
     browser = await chromium.launch()
     // Navigate wide first: at 640px the old hosts collapse the settings entry
     // into a rail, so the entry the market is opened from is not reachable
@@ -32,21 +33,16 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: the market header in a nar
     // layout has to survive.
     page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
     await openMarketPage(page, s)
-    for (let i = 0; i < 6; i++) {
-      const b = page.getByRole('button', { name: /^(Continue|继续|Configure later|稍后配置)$/ }).first()
-      try { await b.waitFor({ timeout: i === 0 ? 30_000 : 3000 }); await b.click() } catch { break }
-    }
-    await openMarketUi(page)
+    await openMarketSettings(page)
     await waitMarketCatalog(page)
     await page.setViewportSize({ width: 640, height: 800 })
-    await page.getByRole('button', { name: /插件市场|Plugin Market/ }).waitFor()
+    await page.locator('[data-dsh-market-root]:visible').waitFor()
   }, 300_000)
   afterAll(async () => { await browser?.close(); await s?.close() })
 
   it('holds the title on one line and keeps the update buttons inside the panel', async () => {
-    const measured = await page.evaluate(() => {
-      const doc = (globalThis as any).document
-      const market = doc.querySelector('[data-dsh-market-root]')
+    const measured = await page.locator('[data-dsh-market-root]:visible').evaluate((market: any) => {
+      const doc = market.ownerDocument
       const row = market.querySelector('[class$="_titleRow"]')
       // Since the row-order change the actions are a sibling of the title row,
       // both inside the header container; the header, not the title row, is the
