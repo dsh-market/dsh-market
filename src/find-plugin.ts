@@ -214,11 +214,9 @@ export interface LlmLike {
   stream(options: {
     provider: string
     model: string
-    reasoningEffort?: string
     messages: unknown[]
     system?: string
     maxTokens?: number
-    temperature?: number
     signal?: AbortSignal
   }): AsyncIterable<{ type: string; text?: string; error?: unknown; reason?: unknown }>
 }
@@ -320,7 +318,6 @@ async function askForPicks(options: {
   candidates: Candidate[]
   max: number
   maxTokens: number
-  temperature: number
   signal?: AbortSignal
 }): Promise<{ intro: string; picks: Array<{ plugin: RegistryPlugin; why: string }> }> {
   const { selection, prompt } = options
@@ -331,11 +328,7 @@ async function askForPicks(options: {
     const stream = options.llm.stream({
       provider: selection.provider,
       model: selection.model,
-      // Picking from a list needs little thought, and a model set to think
-      // hard can spend the whole budget thinking and answer nothing (seen with
-      // DeepSeek at "high"). A selection that names an effort supports
-      // efforts, so it can be turned down; one that does not is left alone.
-      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort === 'off' ? 'off' : 'low' }),
+      // Leave sampling and reasoning at the selected model's DSH defaults.
       system: prompt.system,
       messages: [Object.freeze({
         id: randomUUID(), role: 'user',
@@ -343,7 +336,6 @@ async function askForPicks(options: {
         source: { kind: 'plugin:dshmarket' },
       })],
       maxTokens: options.maxTokens,
-      temperature: options.temperature,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
     for await (const chunk of stream) {
@@ -400,7 +392,7 @@ export async function findPlugins(options: {
   const found = recall(registry, extractTerms(request), CANDIDATE_LIMIT, new Set((have?.installed ?? []).map(plugin => plugin.name)))
   const answer = await askForPicks({
     llm: llm!, selection, prompt: buildPickPrompt(request, registry, found, have), candidates: found.candidates,
-    max: 5, maxTokens: 6000, temperature: 0.2, ...(options.signal === undefined ? {} : { signal: options.signal }),
+    max: 5, maxTokens: 6000, ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   const preferZh = /\p{Script=Han}/u.test(request)
   const picks = answer.picks.map(({ plugin, why }) => toPick(plugin, registry, preferZh, why))
@@ -507,7 +499,7 @@ export async function recommendPlugins(options: {
   if (candidates.length < RECOMMEND_MAX && (options.exclude ?? []).length > 0) candidates = recommendCandidates(registry, [...seeds.installed, ...seeds.favorited])
   const answer = await askForPicks({
     llm: llm!, selection, prompt: buildRecommendPrompt(registry, seeds, candidates, preferZh), candidates,
-    max: RECOMMEND_MAX, maxTokens: 8000, temperature: 0.5, ...(options.signal === undefined ? {} : { signal: options.signal }),
+    max: RECOMMEND_MAX, maxTokens: 8000, ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   const picks = answer.picks.map(({ plugin, why }) => toPick(plugin, registry, preferZh, why))
   return { request: '', intro: answer.intro, picks, model: selection.model, at: new Date().toISOString() }
