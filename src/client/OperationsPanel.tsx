@@ -306,13 +306,19 @@ export function OperationsPanel(props: OperationsPanelProps) {
   // is the only thing in the way, "installing 0/3" is a contradiction the
   // reader cannot resolve (#752) — nothing is installing, and the number is
   // not the fact they need; the obstacle is.
+  // The verb follows what is actually in flight: pressing Uninstall used to
+  // say "Installing 6/6" because every batch was called an install.
+  const inFlight = new Set(records.filter(record => record.state === 'running' || record.state === 'queued').map(record => record.kind))
+  const busyVerb = inFlight.size === 1
+    ? (inFlight.has('uninstall') ? 'opUninstalling' : inFlight.has('update') ? 'opUpdating' : 'opInstalling')
+    : 'opWorking'
   const waitingOnAgents = summary.running === 0 && summary.blocked > 0
   const batchLabel = waitingOnAgents
     // `blocked`, not `queued`: a record that is only waiting its turn is not
     // waiting on the agents, and saying it is would trade one wrong count for
     // another (#752).
     ? t('opWaitingAgents').replace('{0}', String(summary.blocked))
-    : `${t('opInstalling')} ${String(summary.progressed)}/${String(summary.total)}`
+    : `${t(busyVerb)} ${String(summary.progressed)}/${String(summary.total)}`
   const label = busy
     ? batchLabel
     : summary.attention > 0

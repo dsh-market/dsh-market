@@ -5266,7 +5266,7 @@ describe('lost update progress (config page reopened)', () => {
       fireEvent.click(screen.getByRole('button', { name: new RegExp(re(en.tabInstalled)) }))
       // The restored marker re-renders the running row and its live progress.
       await vi.waitFor(() => { screen.getByRole('button', { name: en.updating }) })
-      fireEvent.click(screen.getByRole('button', { name: re(en.opInstalling) }))
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(`${re(en.opUpdating).source} \\d+/\\d+`) }))
       const panel = document.querySelector('[class*="opPanel"]')
       expect(panel, 'the Tasks panel did not open').toBeTruthy()
       expect(panel!.textContent).toContain('dsh-loop')
@@ -13141,6 +13141,56 @@ describe('interrupted updates at startup (#1167)', () => {
     const trigger = screen.getByRole('button', { name: /^Installing /u })
     expect(trigger.textContent).not.toContain(en.startupRepairBadge)
     expect(screen.getByText('lost-update')).toBeTruthy()
+  })
+
+  it.each([
+    ['uninstall', /^Uninstalling /u],
+    ['update', /^Updating /u],
+    ['install', /^Installing /u],
+  ] as const)('names what is running on the Tasks button: %s', (kind, label) => {
+    const noop = () => {}
+    render(<OperationsPanel
+      t={props().t}
+      lang="en"
+      describe={name => ({ title: name })}
+      records={[
+        { id: 'earlier', name: 'earlier-plugin', kind: 'install', state: 'done' },
+        { id: 'working', name: 'working-plugin', kind, state: 'running' },
+      ]}
+      open={false}
+      onOpenChange={noop}
+      replacing={false}
+      envReady
+      onClearSettled={noop}
+      onCancel={noop}
+      onDismiss={noop}
+      onRefresh={noop}
+      onResolveConflict={noop}
+    />)
+    expect(screen.getByRole('button', { name: label })).toBeTruthy()
+  })
+
+  it('says "Working on" when different kinds of task are in flight together', () => {
+    const noop = () => {}
+    render(<OperationsPanel
+      t={props().t}
+      lang="en"
+      describe={name => ({ title: name })}
+      records={[
+        { id: 'a', name: 'a-plugin', kind: 'uninstall', state: 'running' },
+        { id: 'b', name: 'b-plugin', kind: 'install', state: 'queued' },
+      ]}
+      open={false}
+      onOpenChange={noop}
+      replacing={false}
+      envReady
+      onClearSettled={noop}
+      onCancel={noop}
+      onDismiss={noop}
+      onRefresh={noop}
+      onResolveConflict={noop}
+    />)
+    expect(screen.getByRole('button', { name: /^Working on /u })).toBeTruthy()
   })
 
   it('reads the completed startup report while the task list is otherwise idle', async () => {
