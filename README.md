@@ -42,10 +42,11 @@ One-click themes: install, switch live, no restart.
 
 ## Install
 
-- **Official DSH Desktop:** Open **Settings → Plugins** in the app, search for
-  `dshmarket`, and install it through the app's plugin manager. No command line
-  is needed.
-- **Regular `dsh web`:** Run this command, then restart `dsh web`:
+- **In the app, no command line (works on DSH Desktop and plain `dsh web`):**
+  open the **Plugins** page, click **Add plugin**, type `dshmarket`, click
+  **Install**, then **Enable now**. A fresh DSH has this button from the start.
+  The package name is `dshmarket`, one word, no hyphen.
+- **Command line (`dsh web`):** Run this command, then restart `dsh web`:
 
   ```sh
   dsh plugin --profile web add dshmarket
@@ -66,7 +67,7 @@ One-click themes: install, switch live, no restart.
 On a machine with DSH Desktop, running `dsh plugin --profile web add dshmarket`
 may report success but installs the market into `profiles/web`, **not** the
 profile used by the Desktop app. It will not appear in Desktop. Install through
-the app's **Settings → Plugins** instead; Desktop's profile is managed by the app.
+the app's **Plugins → Add plugin** instead; Desktop's profile is managed by the app.
 
 Once installed, open **Plugins → Plugin Market** (dsh 0.2.1+). On dsh 0.2.0 and earlier it is under **Settings → Plugin Market**.
 
