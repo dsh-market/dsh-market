@@ -22,6 +22,10 @@ One-click themes: install, switch live, no restart.
 
 <table>
 <tr>
+<td width="180" align="center"><a href="https://modelgo.ai/?utm_source=dsh-market&utm_medium=sponsorship&utm_content=readme&campaign_id=dsh-market&ad_group_id=readme"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/modelgo-dark.svg"><img src="assets/partners/modelgo.svg" alt="ModelGo" width="150" height="150"></picture></a></td>
+<td>Thanks to <strong>ModelGo</strong> for sponsoring this project!<br>ModelGo provides an enterprise-grade AI model API: one API key reaches the latest mainstream models, including Claude, GPT, Gemini and DeepSeek. <strong>Sign up now for 40% off DeepSeek V4.1 Flash, and get up to $10 extra on your first top-up!</strong> Try it: <a href="https://modelgo.ai/?utm_source=dsh-market&utm_medium=sponsorship&utm_content=readme&campaign_id=dsh-market&ad_group_id=readme">ModelGo website</a></td>
+</tr>
+<tr>
 <td width="180" align="center"><a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme"><img src="assets/partners/qiniu.png" alt="Qiniu Cloud" width="150"></a></td>
 <td>Thanks to <strong>Qiniu Cloud</strong> for sponsoring this project!<br>Qiniu Cloud (02567.HK) runs an enterprise MaaS platform: one place to call 150+ leading models from around the world, compatible with the major model vendors' protocols, covering text, image, audio, video and file processing. It serves more than 1.8 million enterprise developers. <strong>New enterprise users get 20 million tokens free. Year-end offer: new users can <a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme">get up to 1 billion free tokens a day</a>.</strong></td>
 </tr>

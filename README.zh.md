@@ -22,6 +22,10 @@
 
 <table>
 <tr>
+<td width="180" align="center"><a href="https://modelgo.ai/?utm_source=dsh-market&utm_medium=sponsorship&utm_content=readme&campaign_id=dsh-market&ad_group_id=readme"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/modelgo-dark.svg"><img src="assets/partners/modelgo.svg" alt="ModelGo" width="150" height="150"></picture></a></td>
+<td>感谢 <strong>ModelGo</strong> 赞助本项目！<br>ModelGo 提供企业级 AI 大模型 API 服务，一个 API Key 即可调用 Claude、GPT、Gemini、DeepSeek 等最新主流 AI 模型。<strong>当前注册即享 6 折 DeepSeek V4.1 Flash，首充赠最高 $10！</strong>立即体验：<a href="https://modelgo.ai/?utm_source=dsh-market&utm_medium=sponsorship&utm_content=readme&campaign_id=dsh-market&ad_group_id=readme">ModelGo 官网</a></td>
+</tr>
+<tr>
 <td width="180" align="center"><a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme"><img src="assets/partners/qiniu.png" alt="七牛云" width="150"></a></td>
 <td>感谢 <strong>七牛云</strong> 赞助本项目！<br>七牛云（02567.HK）旗下企业级 MaaS 平台，一站式调用全球 150+ 主流模型，兼容全球主流模型厂商协议，覆盖文本、图像、音频、视频、文件处理等全模态处理能力，服务超过 180 万企业级开发者用户。<strong>企业新用户免费领 2000 万 token；年终回馈，新用户<a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme">最高免费享 10 亿 Token/日</a></strong></td>
 </tr>

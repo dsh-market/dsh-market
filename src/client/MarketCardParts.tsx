@@ -465,7 +465,7 @@ export function SponsorMark({ lang, t }: { lang: 'zh' | 'en'; t: Translate }) {
           rel="noreferrer sponsored"
           title={`${sponsor.name[lang]} · ${sponsor.scope[lang]}`}
         >
-          <img className={css.sponsorLogo} src={sponsor.logo} alt={sponsor.name[lang]} height={14} />
+          <img className={css.sponsorLogo} src={sponsor.logo} alt={sponsor.name[lang]} height={14} style={sponsor.markWidth === undefined ? undefined : { maxWidth: sponsor.markWidth }} />
         </a>
       ))}
     </span>

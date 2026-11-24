@@ -1,9 +1,49 @@
 [
   {
+    "id": "modelgo",
+    "tier": "title",
+    "name": {
+      "zh": "ModelGo",
+      "en": "ModelGo",
+      "ja": "ModelGo"
+    },
+    "scope": {
+      "zh": "企业级 AI 大模型 API",
+      "en": "Enterprise AI model API",
+      "ja": "エンタープライズ向け AI モデル API"
+    },
+    "url": "https://modelgo.ai/?utm_source=dsh-market&utm_medium=sponsorship&utm_content=readme&campaign_id=dsh-market&ad_group_id=readme",
+    "logo": "assets/partners/modelgo.svg",
+    "logoDark": "assets/partners/modelgo-dark.svg",
+    "mark": "assets/partners/modelgo.svg",
+    "site": "site/assets/modelgo.svg",
+    "readme": {
+      "zh": "感谢 <strong>ModelGo</strong> 赞助本项目！<br>ModelGo 提供企业级 AI 大模型 API 服务，一个 API Key 即可调用 Claude、GPT、Gemini、DeepSeek 等最新主流 AI 模型。<strong>当前注册即享 6 折 DeepSeek V4.1 Flash，首充赠最高 $10！</strong>立即体验：<a href=\"{url}\">ModelGo 官网</a>",
+      "en": "Thanks to <strong>ModelGo</strong> for sponsoring this project!<br>ModelGo provides an enterprise-grade AI model API: one API key reaches the latest mainstream models, including Claude, GPT, Gemini and DeepSeek. <strong>Sign up now for 40% off DeepSeek V4.1 Flash, and get up to $10 extra on your first top-up!</strong> Try it: <a href=\"{url}\">ModelGo website</a>"
+    },
+    "until": null,
+    "utm": {
+      "readme": "readme",
+      "site": "website",
+      "market": "market_search"
+    },
+    "siteWidth": 104,
+    "markWidth": 64,
+    "readmeBox": 150
+  },
+  {
     "id": "qiniu",
     "tier": "title",
-    "name": { "zh": "七牛云", "en": "Qiniu Cloud", "ja": "七牛云 (Qiniu Cloud)" },
-    "scope": { "zh": "企业级 MaaS 平台", "en": "Enterprise MaaS platform", "ja": "エンタープライズ MaaS プラットフォーム" },
+    "name": {
+      "zh": "七牛云",
+      "en": "Qiniu Cloud",
+      "ja": "七牛云 (Qiniu Cloud)"
+    },
+    "scope": {
+      "zh": "企业级 MaaS 平台",
+      "en": "Enterprise MaaS platform",
+      "ja": "エンタープライズ MaaS プラットフォーム"
+    },
     "url": "https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme",
     "logo": "assets/partners/qiniu.png",
     "mark": "assets/partners/qiniu-mark.png",
@@ -17,8 +57,16 @@
   {
     "id": "fenno",
     "tier": "title",
-    "name": { "zh": "Fenno.ai", "en": "Fenno.ai", "ja": "Fenno.ai" },
-    "scope": { "zh": "编程模型 API 中转", "en": "API relay for coding models", "ja": "コーディング向けモデルの API 中継" },
+    "name": {
+      "zh": "Fenno.ai",
+      "en": "Fenno.ai",
+      "ja": "Fenno.ai"
+    },
+    "scope": {
+      "zh": "编程模型 API 中转",
+      "en": "API relay for coding models",
+      "ja": "コーディング向けモデルの API 中継"
+    },
     "url": "https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme",
     "logo": "assets/partners/fenno.png",
     "mark": "assets/partners/fenno-mark.png",
@@ -32,15 +80,23 @@
   {
     "id": "hualong",
     "tier": "title",
-    "name": { "zh": "华龙算力", "en": "HuaLongAI", "ja": "華龍算力 (HuaLongAI)" },
-    "scope": { "zh": "Codex、DeepSeek 与 Claude 模型 API 中转", "en": "API relay for Codex, DeepSeek and Claude models", "ja": "Codex・DeepSeek・Claude モデルの API 中継" },
+    "name": {
+      "zh": "华龙算力",
+      "en": "HuaLongAI",
+      "ja": "華龍算力 (HuaLongAI)"
+    },
+    "scope": {
+      "zh": "Codex、DeepSeek 与 Claude 模型 API 中转",
+      "en": "API relay for Codex, DeepSeek and Claude models",
+      "ja": "Codex・DeepSeek・Claude モデルの API 中継"
+    },
     "url": "https://dsh-market.hualong-ai.com/",
     "logo": "assets/partners/hualong.png",
     "mark": "assets/partners/hualong-mark.png",
     "site": "site/assets/hualong.png",
     "readme": {
-      "zh": "感谢 <strong>华龙算力（HuaLongAI）</strong> 赞助本项目！<br>HuaLongAI（华龙算力） 是一家稳定、高效的 API 中转服务商，主营 Codex 、Deepseek与 Claude 系列模型，100% 官方源直供、不掺假、高可用，平均SLA高于99.2%；计费透明，Token 级账单可逐笔核验，支持企业合同与发票，<a href=\"{url}\">dsh-market.hualong-ai.com</a>",
-      "en": "Thanks to <strong>HuaLongAI</strong> for sponsoring this project!<br>HuaLongAI is a stable, efficient API relay service focused on Codex, DeepSeek and Claude models: 100% direct from official sources, never diluted, highly available, with average SLA above 99.2%. Billing is transparent, with token-level bills you can verify line by line, and enterprise contracts and invoices are supported. <a href=\"{url}\">dsh-market.hualong-ai.com</a>"
+      "zh": "感谢 <strong>华龙算力（HuaLongAI）</strong> 赞助本项目！<br>HuaLongAI（华龙算力） 是一家稳定、高效的 API 中转服务商，主营 Codex 、Deepseek与 Claude 系列模型，100% 官方源直供、不掺假、高可用，平均SLA高于99.2%；计费透明，Token 级账单可逐笔核验，支持企业合同与发票，<a href=\"{url}\">点击此处注册赠送2$专属使用额度</a>",
+      "en": "Thanks to <strong>HuaLongAI</strong> for sponsoring this project!<br>HuaLongAI is a stable, efficient API relay service focused on Codex, DeepSeek and Claude models: 100% direct from official sources, never diluted, highly available, with average SLA above 99.2%. Billing is transparent, with token-level bills you can verify line by line, and enterprise contracts and invoices are supported. <a href=\"{url}\">Sign up here for $2 of free credit</a>"
     },
     "until": null
   }
