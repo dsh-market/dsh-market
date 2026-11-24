@@ -8470,6 +8470,29 @@ describe('local-dev restore', () => {
       .toEqual(['dsh-loop', 'dsh-notify'])
   })
 
+  it('says how many switched-off plugins have an update, since Update all leaves them out (#1257)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0', 'dsh-third': '^1.0.0', 'dsh-fourth': '^1.0.0' },
+        live: [],
+        disabled: ['dsh-third', 'dsh-fourth'],
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-third': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-fourth': { kind: 'npm', version: '1.0.0', latest: '1.0.0', updateAvailable: false },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await openInstalled()
+    expect(await screen.findByText(en.disabledUpdates.replace('{0}', '1'))).toBeTruthy()
+    // Update all itself still counts only the plugin that is switched on.
+    expect(screen.getByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
+  })
+
   it('says a name-only catalog match is unverified, and names whose plugin it is (#485)', async () => {
     // The local copy declares no repository, so the catalog row below agreed
     // on nothing but the package name — and its owner may be a stranger.

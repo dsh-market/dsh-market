@@ -1116,8 +1116,18 @@ export function useMarketRender(c: MarketRenderIn) {
   // Update-all on the Installed row. On the Plugins tab the host already has
   // a page title, so it sits on the market's own tab row; Settings and the
   // sidebar keep it in the heading.
+  // "Update all" leaves out plugins that are switched off, so they are easy to
+  // forget. Say how many are waiting; each updates from its own card (#1257).
+  const disabledUpdateCount = Object.keys(installed).filter(name => name !== selfName
+    && effectiveDisabledSet.has(name)
+    && isPluginUpdatable(name, String(installed[name]), updates[name], updatedNames, quietUpdateSet)).length
   const batchActions = (
     <>
+      {disabledUpdateCount >= 1 && (
+        <span className={css.spec} title={t('disabledUpdatesHint')}>
+          {t('disabledUpdates').replace('{0}', String(disabledUpdateCount))}
+        </span>
+      )}
       {reminderBatchUpdatableNames.length >= 1 && (
         <Button
           variant="primary"
