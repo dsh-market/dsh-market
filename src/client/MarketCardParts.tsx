@@ -453,21 +453,38 @@ export function SponsorMark({ lang, t }: { lang: 'zh' | 'en'; t: Translate }) {
   const today = new Date().toISOString().slice(0, 10)
   const list = SPONSORS.filter(sponsor => sponsor.until === null || sponsor.until >= today)
   if (list.length === 0) return null
+  // The row keeps the small marks; pointing at them (or tabbing into them)
+  // opens a larger card with every sponsor's logo, name and what they offer,
+  // so the row can stay small however many sponsors there are.
   return (
-    <span className={css.sponsorMark}>
-      <span className={css.sponsorLabel}>{t('sponsorsLabel')}</span>
-      {list.map(sponsor => (
-        <a
-          key={sponsor.id}
-          className={css.sponsorItem}
-          href={sponsor.url}
-          target="_blank"
-          rel="noreferrer sponsored"
-          title={`${sponsor.name[lang]} · ${sponsor.scope[lang]}`}
-        >
-          <img className={css.sponsorLogo} src={sponsor.logo} alt={sponsor.name[lang]} height={14} style={sponsor.markWidth === undefined ? undefined : { maxWidth: sponsor.markWidth }} />
-        </a>
-      ))}
+    <span className={css.sponsorWrap}>
+      <span className={css.sponsorMark}>
+        <span className={css.sponsorLabel}>{t('sponsorsLabel')}</span>
+        {list.map(sponsor => (
+          <a
+            key={sponsor.id}
+            className={css.sponsorItem}
+            href={sponsor.url}
+            target="_blank"
+            rel="noreferrer sponsored"
+            aria-label={`${sponsor.name[lang]} · ${sponsor.scope[lang]}`}
+          >
+            <img className={css.sponsorLogo} src={sponsor.logo} alt="" height={14} style={sponsor.markWidth === undefined ? undefined : { maxWidth: sponsor.markWidth }} />
+          </a>
+        ))}
+      </span>
+      <span className={css.sponsorPop} aria-hidden="true">
+        <span className={css.sponsorPopTitle}>{t('sponsorsPopTitle')}</span>
+        <span className={css.sponsorPopGrid} style={{ gridTemplateColumns: `repeat(${String(list.length <= 2 ? list.length : list.length <= 4 ? 2 : 3)}, 168px)` }}>
+          {list.map(sponsor => (
+            <a key={sponsor.id} className={css.sponsorPopItem} href={sponsor.url} target="_blank" rel="noreferrer sponsored" tabIndex={-1}>
+              <span className={css.sponsorPopLogo}><img src={sponsor.logo} alt="" /></span>
+              <span className={css.sponsorPopName}>{sponsor.name[lang]}</span>
+              <span className={css.sponsorPopScope}>{sponsor.scope[lang]}</span>
+            </a>
+          ))}
+        </span>
+      </span>
     </span>
   )
 }
