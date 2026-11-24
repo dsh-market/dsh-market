@@ -705,6 +705,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			checkoutRecoveryCheck: "市场无法核实原链接能否安全接回。",
 			checkoutRecoveryRetry: "请在插件操作结束后重启 DSH。",
 			opInstalling: "正在安装",
+			opUninstalling: "正在卸载",
+			opUpdating: "正在更新",
+			opWorking: "正在处理",
 			opNeedsYou: "项需处理",
 			opQueued: "排队中",
 			opQueuedAhead: "前面还有",
@@ -1702,6 +1705,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			checkoutRecoveryCheck: "The market could not confirm that it was safe to restore the original link.",
 			checkoutRecoveryRetry: "Reopen DSH after the plugin operation has finished.",
 			opInstalling: "Installing",
+			opUninstalling: "Uninstalling",
+			opUpdating: "Updating",
+			opWorking: "Working on",
 			opNeedsYou: "need attention",
 			opQueued: "Queued",
 			opQueuedAhead: "ahead:",
@@ -2699,6 +2705,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			checkoutRecoveryCheck: "元のリンクを安全に復元できるか確認できませんでした。",
 			checkoutRecoveryRetry: "プラグイン操作が終了した後、DSH を起動し直してください。",
 			opInstalling: "インストール中",
+			opUninstalling: "アンインストール中",
+			opUpdating: "更新中",
+			opWorking: "処理中",
 			opNeedsYou: "件は対応が必要です",
 			opQueued: "キュー待ち",
 			opQueuedAhead: "前にあります：",
@@ -18246,8 +18255,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					document.removeEventListener("mousedown", onPointer);
 				};
 			}, [open, setOpen]);
+			const inFlight = new Set(records.filter((record) => record.state === "running" || record.state === "queued").map((record) => record.kind));
+			const busyVerb = inFlight.size === 1 ? inFlight.has("uninstall") ? "opUninstalling" : inFlight.has("update") ? "opUpdating" : "opInstalling" : "opWorking";
 			const waitingOnAgents = summary.running === 0 && summary.blocked > 0;
-			const batchLabel = waitingOnAgents ? t("opWaitingAgents").replace("{0}", String(summary.blocked)) : `${t("opInstalling")} ${String(summary.progressed)}/${String(summary.total)}`;
+			const batchLabel = waitingOnAgents ? t("opWaitingAgents").replace("{0}", String(summary.blocked)) : `${t(busyVerb)} ${String(summary.progressed)}/${String(summary.total)}`;
 			const label = busy ? batchLabel : summary.attention > 0 ? `${String(summary.attention)} ${t("opNeedsYou")}` : showStartupRepairBadge ? `${t("opTitle")} · ${t("startupRepairBadge")}` : t("opTitle");
 			const quiet = records.length === 0 && !showStartupRepairBadge && !needsCheckoutRecovery && !open;
 			if (props.hideWhenQuiet === true && quiet) return null;
@@ -18508,7 +18519,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		//#endregion
 		//#region src/client/client-version.ts
-		const CLIENT_VERSION = "1.83.1";
+		const CLIENT_VERSION = "1.83.2";
 		/** Numeric x.y.z comparison; prerelease tags are ignored. null if either is not a version. */
 		function compareMarketVersions(a, b) {
 			const parse = (v) => {
@@ -19285,7 +19296,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 									className: Market_module_css_default.grow,
 									children: [
-										t("staleBanner").replace("{0}", "1.83.1").replace("{1}", version ?? ""),
+										t("staleBanner").replace("{0}", "1.83.2").replace("{1}", version ?? ""),
 										" ",
 										hostCaps.selfReload || restartEnabled && restartReachable && debuggerLatch === null ? null : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint"),
 										reloadingSelf === "failed" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", reloadError !== "" ? reloadError : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint")] })
