@@ -18,6 +18,8 @@ import { observeStartupRepair } from './startup-repair-report.ts'
 import type { AgentsServiceLike } from './agents.ts'
 import { modelAccess, registerFindPlugin, setModelAccess, type CommandsServiceLike, type LlmLike, type ModelSelectionLike } from './find-plugin.ts'
 import { loadRegistry } from './registry.ts'
+import { githubPackageVersionAt } from './github-install-target.ts'
+import { activeRegion } from './regions.ts'
 
 export const name = 'dsh-market'
 
@@ -383,6 +385,24 @@ export function apply(ctx: Context, config?: Config): void {
           // globally: other official-desktop installs still go through the
           // manager (#702). The market itself is the one exception (#982).
           hostPackageManagerOf(profileContext),
+          {
+            // A Git bundle's in-place update names the exact version of the
+            // commit it installs; the commit's package.json is the only place
+            // that number lives.
+            gitVersionAt: spec => githubPackageVersionAt(spec, activeRegion()),
+            // dsh 0.2.2+ announces the steps of an in-place update; the page
+            // shows which one is running instead of one fixed line.
+            watchUpdateSteps: (requestId, listener) => {
+              const subscribe = (hostCtx as unknown as {
+                on?: (event: string, listener: (progress: { requestId?: string; step?: string }) => void) => () => void
+              }).on
+              if (typeof subscribe !== 'function') return () => {}
+              const dispose = subscribe.call(hostCtx, 'plugin-manager/update-state', progress => {
+                if (progress.requestId === requestId && typeof progress.step === 'string') listener(progress.step)
+              })
+              return typeof dispose === 'function' ? dispose : () => {}
+            },
+          },
         )
         const resolved: MarketConfig = {
           profile: profileName,
