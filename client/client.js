@@ -808,6 +808,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			perPage: "每页",
 			marketUpdate: "更新插件市场",
 			updateAll: "全部更新",
+			disabledUpdates: "另有 {0} 个已停用的插件可更新",
+			disabledUpdatesHint: "已停用的插件不在「全部更新」里，请在它自己的卡片上更新。",
 			updateCheckFailed: "暂时无法检查更新",
 			sponsorsLabel: "赞助",
 			sponsorsPopTitle: "感谢这些赞助商支持插件市场",
@@ -1810,6 +1812,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			perPage: "Per page",
 			marketUpdate: "Update the plugin market",
 			updateAll: "Update all",
+			disabledUpdates: "Also updatable but switched off: {0}",
+			disabledUpdatesHint: "Switched-off plugins are not part of Update all. Update each from its own card.",
 			updateCheckFailed: "Could not check for updates",
 			sponsorsLabel: "Sponsor",
 			sponsorsPopTitle: "Thanks to the sponsors of this market",
@@ -2811,6 +2815,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			perPage: "1 ページあたり",
 			marketUpdate: "プラグインマーケットを更新",
 			updateAll: "すべて更新",
+			disabledUpdates: "無効のまま更新できるプラグイン: {0}",
+			disabledUpdatesHint: "無効のプラグインは「すべて更新」に含まれません。各カードから更新してください。",
 			updateCheckFailed: "更新を確認できませんでした",
 			sponsorsLabel: "スポンサー",
 			sponsorsPopTitle: "このマーケットを支えるスポンサー",
@@ -18216,11 +18222,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (marketOffer.restoreRequired) askRestore(marketOffer.name);
 				else doUpdate(marketOffer.name);
 			};
+			const disabledUpdateCount = Object.keys(installed).filter((name) => name !== selfName && effectiveDisabledSet.has(name) && isPluginUpdatable(name, String(installed[name]), updates[name], updatedNames, quietUpdateSet)).length;
 			return {
 				anyThemePlugins,
 				applyGroupTheme,
 				authoredDescription,
-				batchActions: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(react_jsx_runtime.Fragment, { children: reminderBatchUpdatableNames.length >= 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				batchActions: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [disabledUpdateCount >= 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: Market_module_css_default.spec,
+					title: t("disabledUpdatesHint"),
+					children: t("disabledUpdates").replace("{0}", String(disabledUpdateCount))
+				}), reminderBatchUpdatableNames.length >= 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 					variant: "primary",
 					size: "sm",
 					disabled: updatingAll || updatingName !== null || busyUrl !== null || removingName !== null,
@@ -18229,7 +18240,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						doUpdateAll();
 					},
 					children: updatingAll ? t("updating") : t("updateAll") + " (" + reminderBatchUpdatableNames.length + ")"
-				}) }),
+				})] }),
 				capabilityDetail,
 				categories,
 				catsExpanded,
@@ -18769,7 +18780,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		//#endregion
 		//#region src/client/client-version.ts
-		const CLIENT_VERSION = "1.84.0";
+		const CLIENT_VERSION = "1.84.1";
 		/** Numeric x.y.z comparison; prerelease tags are ignored. null if either is not a version. */
 		function compareMarketVersions(a, b) {
 			const parse = (v) => {
@@ -19546,7 +19557,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 									className: Market_module_css_default.grow,
 									children: [
-										t("staleBanner").replace("{0}", "1.84.0").replace("{1}", version ?? ""),
+										t("staleBanner").replace("{0}", "1.84.1").replace("{1}", version ?? ""),
 										" ",
 										hostCaps.selfReload || restartEnabled && restartReachable && debuggerLatch === null ? null : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint"),
 										reloadingSelf === "failed" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", reloadError !== "" ? reloadError : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint")] })
