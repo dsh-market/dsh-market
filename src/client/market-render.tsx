@@ -603,20 +603,15 @@ export function useMarketRender(c: MarketRenderIn) {
         <div className={css.recentTitle}>
           <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} trusted={p.source !== undefined} className={css.recentAv} />
           <div className={css.recentName}>
-            <Tooltip label={p.name} side="bottom" maxWidth={320} delayMs={HOVER_TIP_DELAY_MS}>
-              <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" aria-label={`${p.name} — ${t('repoLink')}`}>
-                {pluginName(p.name, p.npm)}
-              </a>
-            </Tooltip>
+            {/* Same as a card: the name opens the detail dialog. */}
+            <button type="button" className={`${css.nm} ${css.nmButton}`} title={p.name} onClick={() => setConfirming(p)}>
+              {pluginName(p.name, p.npm)}
+            </button>
           </div>
           {installAction(p)}
         </div>
         <div className={css.recentBottom}>
-          {desc !== '' && (
-            <Tooltip label={desc} side="bottom" maxWidth={320} delayMs={HOVER_TIP_DELAY_MS}>
-              <p className={css.recentDesc} tabIndex={0}>{desc}</p>
-            </Tooltip>
-          )}
+          {desc !== '' && <CardDesc text={desc} t={t} lines={3} className={css.recentDescBox} onOpen={() => setConfirming(p)} />}
           {renderPluginMenu(p, `recent:${p.url}`)}
         </div>
       </div>

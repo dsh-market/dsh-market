@@ -382,6 +382,8 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                   t={t}
                 />
               </div>
+              {/* The AI line belongs to the search box: right under it, above the chips. */}
+              {aiSearch.status}
               <div className={css.cats}>
                 <div className={css.catsRow}>
                 {/* The height cap belongs to the MEASURING pass only: that pass
@@ -449,7 +451,6 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                 )}
               </div>
               </div>
-              {aiSearch.status}
               <SourceProblems sources={failedSources} lang={lang} t={t} onRetry={() => { void loadCatalog() }} />
               {aiPlugins === null && hasRecent && (recentHidden
                 ? <button type="button" className={css.recentShow} onClick={showRecent}>

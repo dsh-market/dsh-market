@@ -22,7 +22,7 @@
 .submitLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 /* Wrap instead of clipping controls or the Tasks popover in narrow panels.
    position:relative is the popover's anchor — see .opPanel (#866). */
-.tabs{position:relative;display:flex;flex-wrap:wrap;gap:4px;padding:0 0 2px;align-items:center}
+.tabs{position:relative;display:flex;flex-wrap:wrap;gap:4px;padding:0 0 2px;margin-left:-10px;align-items:center}
 .tab{position:relative;display:inline-flex;align-items:center;height:32px;border:none;background:none;font:inherit;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#5c6570);padding:0 10px;border-radius:var(--dsw-radius-sm,#8px);cursor:pointer;white-space:nowrap;transition:background-color 120ms ease,color 120ms ease}
 .tab:hover:not(.on){background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}
 .tab.on{color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
@@ -248,13 +248,15 @@
 .recentTitle{display:flex;align-items:center;gap:10px;min-width:0}
 .recentTitle > :last-child{flex-shrink:0}
 .recentName{min-width:0;flex:1}
-.recentTitle .nm{font-size:15px;line-height:22px;font-weight:600}
+.recentTitle .nm{font-size:14px;line-height:20px;font-weight:500}
 .recentBottom{display:flex;align-items:flex-end;gap:8px;min-width:0}
 .recentBottom > :last-child{flex-shrink:0;margin-left:auto}
 .recentBottom > :not(:last-child){min-width:0;flex:1}
-.recentDesc{margin:0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-secondary,#6b7280);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.recentDesc{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .recentBottom .cardMore{padding:0}
-.recentHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 8px;padding:0 4px}
+.recentDescBox{min-width:0;flex:1}
+.recentTitle .nmButton{display:block;max-width:100%}
+.recentHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 8px;padding:0}
 .recentHead .favoritesSectionHead{margin:0;padding:0;font-weight:600}
 .recentToggle{display:inline-flex;align-items:center;gap:4px;margin:0;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer}
 .recentToggle:hover{color:var(--dsw-alias-label-secondary,#6b7280)}
@@ -985,7 +987,7 @@
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}
-.tabSearchRow{display:flex;align-items:center;gap:8px;padding:0 4px 10px}
+.tabSearchRow{display:flex;align-items:center;gap:8px;padding:0 0 10px}
 .tabSearch{flex:1;min-width:0}
 .groupBulkActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 4px 10px}
 /* Capability disclosure (#401). Quiet by design: these are facts beside the
@@ -1484,6 +1486,7 @@
 @media (max-width:640px){.fpCard{flex-wrap:wrap}.fpActions{align-items:flex-start;align-self:auto;width:100%}}
 /* AI search in the market's search box */
 .aiStatus{display:flex;flex-direction:column;gap:4px;margin:0 0 12px}
+.tabSearchRow + .aiStatus{margin:-4px 0 10px}
 .aiHint{font-size:12px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
 /* With the AI switch inside the field, the clear button and the text make room for it. */
 .aiGroup{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding-left:10px;border-left:1px solid var(--dsw-alias-border-l2,#e5e7eb);font-size:12px;color:var(--dsw-alias-label-secondary,#4b5563);white-space:nowrap}
@@ -1502,7 +1505,7 @@
 .fpLink{margin:0;padding:0;border:0;background:none;font:inherit;color:var(--dsw-alias-state-business-primary,#4f6ef7);cursor:pointer}
 .fpLink:hover{text-decoration:underline}
 .fpLink:disabled{opacity:.5;cursor:default}
-.recTrigger{display:inline-flex;align-items:center;gap:6px;margin:0 0 10px;padding:0 4px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.recTrigger{display:inline-flex;align-items:center;gap:6px;margin:0 0 10px;padding:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .recBlock{margin:2px 0 12px}
 .recHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 4px;padding:0 4px}
 .recHead .favoritesSectionHead{margin:0;padding:0;font-weight:600}

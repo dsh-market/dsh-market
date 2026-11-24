@@ -468,7 +468,8 @@ describe('Market self-update waiting hint (#1244)', () => {
     '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', version: current },
     '/dsh-market/installed': { profile: 'desktop', installed: { dshmarket: current }, live: ['dshmarket'] },
   }
-  const hint = '(New version)'
+  // The visible words now carry the version and time (a bare label left people asking how to get it).
+  const hint = /^\(New version/
 
   beforeEach(() => { vi.setSystemTime(new Date(2026, 10, 17, 0, 54)) })
   afterEach(() => { vi.useRealTimers() })
@@ -11755,8 +11756,9 @@ describe('recently added Discover row (#780)', () => {
     registry: { ...REGISTRY, count: plugins.length, plugins },
   })
   const recent = () => screen.getByRole('region', { name: en.recentlyAdded })
-  const names = (element: HTMLElement) => [...element.querySelectorAll<HTMLAnchorElement>(`.${css.nmLink}`)]
-    .map(link => link.getAttribute('aria-label')?.replace(/ — .*$/, '') ?? '')
+  // A tile's name is the same button a card uses (it opens the detail dialog); its title is the full name.
+  const names = (element: HTMLElement) => [...element.querySelectorAll<HTMLElement>(`.${css.recentTile} .${css.nmButton}`)]
+    .map(button => button.getAttribute('title') ?? '')
   const expectHidden = () => expect(screen.queryByRole('region', { name: en.recentlyAdded })).toBeNull()
 
   beforeEach(() => {
@@ -11881,7 +11883,7 @@ describe('recently added Discover row (#780)', () => {
     const title = tile.querySelector(`.${css.recentTitle}`)!
     const bottom = tile.querySelector(`.${css.recentBottom}`)!
     const avatar = tile.querySelector(`.${css.recentAv}`)
-    const name = within(tile).getByRole('link')
+    const name = tile.querySelector<HTMLElement>(`.${css.nmButton}`)!
     const install = within(tile).getByRole('button', { name: en.install })
     const more = within(tile).getByRole('button', { name: en.groupMore })
     const desc = within(tile).getByText('recent-high description')
@@ -11903,38 +11905,28 @@ describe('recently added Discover row (#780)', () => {
     const tile = recent().querySelector(`.${css.recentTile}`)!
     const title = tile.querySelector(`.${css.recentTitle}`)!
     const bottom = tile.querySelector(`.${css.recentBottom}`)!
-    expect(title.contains(within(tile).getByRole('link'))).toBe(true)
+    expect(title.contains(tile.querySelector(`.${css.nmButton}`))).toBe(true)
     expect(title.contains(within(tile).getByRole('button', { name: en.install }))).toBe(true)
     expect(bottom.contains(within(tile).getByRole('button', { name: en.groupMore }))).toBe(true)
-    expect(tile.querySelector(`.${css.recentDesc}`)).toBeNull()
+    expect(tile.querySelector(`.${css.recentDescBox}`)).toBeNull()
   })
 
-  it('keeps the full name and description available on hover', async () => {
+  it('opens the same detail dialog as a card from the name and from the description', async () => {
     stubFetch({ '/dsh-market/registry': registry() })
     render(<MarketSection {...props()} />)
     await screen.findByRole('region', { name: en.recentlyAdded })
     const first = recent().querySelector(`.${css.recentTile}`)!
-    const name = within(first).getByRole('link')
-    const desc = within(first).getByText('recent-high description')
-    // Native title is the beige system bubble; the host Tooltip is the one
-    // that matches the rest of the page.
-    expect(name.getAttribute('title')).toBeNull()
-    expect(desc.getAttribute('title')).toBeNull()
-    fireEvent.mouseEnter(name)
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)) })
-    expect(screen.getByRole('tooltip').textContent).toBe('recent-high')
-    fireEvent.mouseLeave(name)
-    fireEvent.mouseEnter(desc)
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)) })
-    expect(screen.getByRole('tooltip').textContent).toBe('recent-high description')
-    fireEvent.mouseLeave(desc)
-    expect(screen.queryByRole('tooltip')).toBeNull()
+    const name = first.querySelector<HTMLElement>(`.${css.nmButton}`)!
+    // The full name stays reachable on a truncated tile.
+    expect(name.getAttribute('title')).toBe('recent-high')
+    fireEvent.click(name)
+    let dialog = within(await screen.findByRole('dialog'))
+    expect(dialog.getByRole('button', { name: en.confirmInstall })).toBeTruthy()
+    fireEvent.click(dialog.getByRole('button', { name: en.cancel }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirmInstall })).toBeNull())
+    fireEvent.click(within(first as HTMLElement).getByText('recent-high description'))
+    dialog = within(await screen.findByRole('dialog'))
+    expect(dialog.getByRole('button', { name: en.confirmInstall })).toBeTruthy()
   })
 
   it('keeps extra recent tiles on a quiet horizontal scroll, capped at eight', async () => {
@@ -14189,5 +14181,22 @@ describe('what an organization turned off or fixed', () => {
     expect(screen.getByText(en.pinnedByOrg.replace('{0}', '1.21.6'))).toBeTruthy()
     // and says nothing of the kind about the rest
     expect(screen.getAllByText(/Version set by your organization/)).toHaveLength(1)
+  })
+})
+
+describe('the new-version words beside the market version say what they mean', () => {
+  const t = (key: string): string => ({
+    marketVersionWaitingText: '(New version: {0})',
+    marketVersionWaitingUnknown: '(New version {0}, not available to update yet. Check back in a few days)',
+    marketVersionAvailableAt: '{0} available at {1}',
+    marketVersionAvailableNow: '{0} available now',
+  } as Record<string, string>)[key] ?? key
+
+  it('names the time when it is known, and says it cannot be updated yet when it is not', async () => {
+    const { marketWaitLabel } = await import('../../src/client/market-helpers.ts')
+    const later = new Date(Date.now() + 3 * 3_600_000).toISOString()
+    expect(marketWaitLabel({ latest: '1.2.0', until: later }, null, 'en', t as never)).toMatch(/^\(New version: v?1\.2\.0 available at /)
+    expect(marketWaitLabel({ latest: '1.2.0', until: later, estimated: true }, null, 'en', t as never)).toContain('not available to update yet')
+    expect(marketWaitLabel({ latest: '1.2.0', until: '2000-01-01T00:00:00Z' }, null, 'en', t as never)).toContain('not available to update yet')
   })
 })
