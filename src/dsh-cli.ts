@@ -552,6 +552,19 @@ export interface InstallResult {
    * not "that plugin is in use".
    */
   needsRestart?: boolean
+  /**
+   * The host replaced the running market itself during this run, so the
+   * instance serving the request has been disposed and anything that needs
+   * its context (the loader inventory, hot mounts) would throw. The update
+   * route answers from this result alone.
+   */
+  selfSwapped?: boolean
+  /**
+   * The host loaded the new build into the running process itself, so the
+   * module in memory IS the new one: the update route reports it live, not
+   * "restart to apply", and does not remember it as stale.
+   */
+  liveSwap?: boolean
   /** Package names pnpm reported as having ignored build scripts (ndjson). */
   ignoredBuilds?: string[]
   /**

@@ -195,7 +195,41 @@ describe('profile the launcher booted (#639)', () => {
     apply(ctx as never)
 
     expect(state.packageManagers).toEqual([])
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', launcher.dir, packageManager])
+    expect(state.officialFactoryArgs[0]?.slice(1, 4)).toEqual(['desktop', launcher.dir, packageManager])
+  })
+
+  it('hands the runtime a listener for the host\'s update steps, tied to the request id', () => {
+    // dsh 0.2.2+ announces `plugin-manager/update-state` per step of an
+    // in-place update; the page shows the step, so the wiring has to filter
+    // by the request id (another update's steps are not this one's) and has to
+    // unsubscribe.
+    const handlers: Array<(progress: { requestId?: string; step?: string }) => void> = []
+    let unsubscribed = 0
+    const ctx = Object.assign(new FakeContext({
+      webServer: {}, loader: {},
+      profileContext: { ...launcher },
+    }), {
+      on: (event: string, handler: (progress: { requestId?: string; step?: string }) => void) => {
+        expect(event).toBe('plugin-manager/update-state')
+        handlers.push(handler)
+        return () => { unsubscribed += 1 }
+      },
+    })
+
+    apply(ctx as never)
+
+    const hooks = state.officialFactoryArgs[0]?.[4] as {
+      watchUpdateSteps: (requestId: string, listener: (step: string) => void) => () => void
+      gitVersionAt: unknown
+    }
+    expect(typeof hooks.gitVersionAt).toBe('function')
+    const heard: string[] = []
+    const stop = hooks.watchUpdateSteps('mine', step => heard.push(step))
+    handlers[0]?.({ requestId: 'someone-else', step: 'removing' })
+    handlers[0]?.({ requestId: 'mine', step: 'installing' })
+    expect(heard).toEqual(['installing'])
+    stop()
+    expect(unsubscribed).toBe(1)
   })
 
   it('uses the official manager rather than the forbidden CLI for Electron desktop', () => {
@@ -216,7 +250,7 @@ describe('profile the launcher booted (#639)', () => {
     })
     expect(state.mounts[0].runtime).toBe(state.runtime)
     expect(state.officialFactoryArgs).toHaveLength(1)
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', launcher.dir, null])
+    expect(state.officialFactoryArgs[0]?.slice(1, 4)).toEqual(['desktop', launcher.dir, null])
     expect(state.mounts[0].config).toMatchObject({ desktopHost: true, allowRestart: false })
   })
 
@@ -248,7 +282,7 @@ describe('profile the launcher booted (#639)', () => {
     apply(ctx as never, { profile: 'desktop' })
 
     expect(state.officialFactoryArgs).toHaveLength(1)
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', undefined, null])
+    expect(state.officialFactoryArgs[0]?.slice(1, 4)).toEqual(['desktop', undefined, null])
     expect(state.mounts[0].config).toMatchObject({ profile: 'desktop', desktopHost: true, allowRestart: false })
     // No launcher answered, so no directory: the routes derive it, exactly as
     // they do for the flag-and-default path.
@@ -260,7 +294,7 @@ describe('profile the launcher booted (#639)', () => {
 
     apply(ctx as never, { profile: 'Desktop' })
 
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['Desktop', launcher.dir, null])
+    expect(state.officialFactoryArgs[0]?.slice(1, 4)).toEqual(['Desktop', launcher.dir, null])
     expect(state.mounts[0].config).toMatchObject({ profile: 'Desktop', profileDirectory: launcher.dir })
   })
 

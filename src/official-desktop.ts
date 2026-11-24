@@ -11,7 +11,9 @@ import {
   type HostPackageManager,
   type InstallResult,
 } from './dsh-cli.ts'
+import { logEvent } from './log.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
+import { compareSemver, isSemver } from './check.ts'
 import {
   DeadlineExceeded,
   PendingUpdateJournal,
@@ -33,6 +35,26 @@ interface ManagedResult {
   repairOnRestart?: boolean
   /** The refusal is the host's restart-first state, not a plugin in use (#1253). */
   needsRestart?: boolean
+  /**
+   * The host stopped or undid its own work: the profile holds what it held
+   * before the call. Set by the in-place update path, where a refusal at the
+   * target check, a failed removal that never reached pnpm, and a failure the
+   * host already rolled back all leave the old version in place.
+   */
+  untouched?: boolean
+  /** One more plain sentence for the user, appended to the failure's account. */
+  note?: string
+  /**
+   * The host replaced the running market itself during this call: the
+   * instance that asked is already disposed (see `updateInPlace`).
+   */
+  selfSwapped?: boolean
+  /**
+   * The host loaded the new build into the running process itself (HMR):
+   * `applied`, not `restart-required`. The old module is gone from memory, so
+   * the update route must not say "restart to apply".
+   */
+  liveSwap?: boolean
 }
 
 /**
@@ -81,11 +103,58 @@ const INSTALL_DEADLINE_MS = HOST_IDLE_WATCHDOG_MS + DEADLINE_MARGIN_MS
  * operation refusal (#928's spec caught it).
  */
 const OPERATION_DEADLINE_MS = REMOVE_DEADLINE_MS + INSTALL_DEADLINE_MS + DEADLINE_MARGIN_MS
+/**
+ * The bound around the host's own in-place update (`updateBundle`). The host
+ * runs the whole sequence itself — check the target, remove, install, and on a
+ * failed install remove again and put the old version back — so the market no
+ * longer sees the phases, only the one answer. Each of those phases can spend
+ * the host's silence watchdog on its own pnpm child, and the market must not
+ * answer for the host while the host is still diagnosing (#1250), so the bound
+ * is three phases long: check + install + the restore the host owes after a
+ * failed install. It is a backstop against a call that never settles, not a
+ * budget for a slow network.
+ */
+const IN_PLACE_UPDATE_DEADLINE_MS = 3 * (HOST_IDLE_WATCHDOG_MS + DEADLINE_MARGIN_MS)
+/** Strictly longer than the call it wraps, for the reason `OPERATION_DEADLINE_MS` gives. */
+const IN_PLACE_OPERATION_DEADLINE_MS = IN_PLACE_UPDATE_DEADLINE_MS + DEADLINE_MARGIN_MS
+
+/** What `updateBundle` answers (`PluginUpdateResult` in `@deepseek-ai/dsh-plugin-manager` 0.2.2+). */
+export interface ManagedUpdateResult {
+  from: string
+  to: string
+  /** The last step that ran: the target check, the removal, or the target's install. */
+  step: 'check' | 'remove' | 'install'
+  result: ManagedResult & { changed?: boolean; stage?: string; target?: string }
+  /** Present when the install failed after the old version was removed: the old version's reinstall. */
+  restore?: ManagedResult
+}
+
+/** The part of one `listBundles` row the in-place update decision reads. */
+export interface ManagedBundleRow {
+  name: string
+  installed?: boolean
+  version?: string
+  source?: string
+  /** How `updateBundle` can replace it; absent when it cannot. */
+  update?: 'registry' | 'git'
+}
 
 export interface OfficialPluginManagerLike {
   installBundle(spec: string, options?: { requestId?: string; registry?: string }): Promise<ManagedResult>
   removeBundle(name: string): Promise<ManagedResult>
   cancelInstall(requestId: string): Promise<unknown>
+  /**
+   * Replace an installed bundle with a newer version, in one call. Only dsh
+   * 0.2.2 and later: absent on 0.2.1, whose manager has no in-place update, and
+   * every caller must feature-detect it.
+   */
+  updateBundle?(
+    name: string,
+    version: string,
+    options?: { registry?: string | null; spec?: string; requestId?: string },
+  ): Promise<ManagedUpdateResult>
+  /** Used with `updateBundle` to learn which bundles it can replace (`update`). */
+  listBundles?(): Promise<ManagedBundleRow[]>
 }
 
 /**
@@ -144,6 +213,13 @@ function detail(error: unknown): string {
     }
     return diagnostic
   }
+  // The host's own reason for a refused check (the registry did not answer,
+  // the version is not there). Said with what it means for the user: nothing
+  // changed, and what to do.
+  const reason = code === 'operation-error' ? (error as { diagnostic?: unknown }).diagnostic : undefined
+  if (typeof reason === 'string' && reason.trim() !== '') {
+    return `桌面端没能完成这次操作，现在的版本不受影响。原因见下，通常检查网络后重试即可。 / The desktop app could not finish this operation and your current version is unchanged. The reason is below; checking the network and retrying usually fixes it.\n${reason.trim().slice(0, 600)}`
+  }
   return JSON.stringify(error)
 }
 
@@ -188,6 +264,20 @@ const REFUSAL_COPY: Record<string, { zh: string; en: string }> = {
   'operation-incomplete': {
     zh: '桌面端没有在限定时间内答复这次操作：磁盘上可能已经改完了，市场只是没等到答复，所以没有回滚。重新打开 DSH 后市场会按磁盘状态核对；状态不对的话从「设置 → 插件」处理',
     en: 'the desktop app did not answer this operation in time: the change may already be on disk, and the market got no reply, so it rolled nothing back. Reopen DSH and the market checks what is actually there; if it still looks wrong, use Settings → Plugins',
+  },
+  // Refusals of the in-place update (`updateBundle`, dsh 0.2.2+). Every one
+  // says what stopped, that the old version is still there, and what to do.
+  'not-bundle': {
+    zh: '新版本不是一个 DSH 插件包，桌面端没有安装它，现在的版本不受影响。请稍后再试，或联系插件作者',
+    en: 'the new version is not a DSH plugin package, so the desktop app did not install it and your current version is unchanged. Try again later, or contact the plugin author',
+  },
+  'unexpected-package': {
+    zh: '装出来的不是要求的版本（常见原因：这个版本还在新版本等待期内），桌面端已撤销这次更新，旧版本还在。过几天再更新一次',
+    en: 'what got installed was not the requested version (a common cause: it is still inside the fresh-release wait), so the desktop app undid the update and your old version is still there. Try again in a few days',
+  },
+  'invalid-spec': {
+    zh: '桌面端不接受这次更新的目标，没有改动任何东西。请刷新市场后再试',
+    en: 'the desktop app did not accept the target of this update and changed nothing. Refresh the market and try again',
   },
   'update-incomplete': {
     zh: '桌面端没有在限定时间内完成这次更新：插件可能已经被移除，新版本却还没装上。重新打开 DSH 后市场会自动补装；也可以现在从「设置 → 插件」重试',
@@ -300,6 +390,269 @@ interface UpdateContext {
   packageManager?: HostPackageManager | null
   /** Told when the market starts or ends a pnpm child of its own (the self-update overlay). */
   onOwnChild?: (running: boolean) => void
+  /**
+   * The Git commit's package version, for a Git bundle's in-place update: the
+   * host demands the exact version the spec will install, and a commit's
+   * version is only in its package.json. Null when it cannot be read — the
+   * update then takes the remove-and-install path instead.
+   */
+  gitVersionAt?: (spec: string) => Promise<string | null>
+  /**
+   * Hear the host's own steps of one in-place update (`plugin-manager/update-
+   * state`) so the page can say which one is running. Returns the unsubscribe.
+   */
+  watchUpdateSteps?: (requestId: string, listener: (step: string) => void) => () => void
+}
+
+/** What the update steps the host reports are called on the progress line. */
+const UPDATE_STEP_LINES: Record<string, string> = {
+  checking: '正在确认新版本可以装 / Checking that the new version can be installed',
+  removing: '正在停掉旧版本 / Stopping the old version',
+  installing: '正在安装新版本 / Installing the new version',
+  restoring: '新版本没装上，正在装回旧版本 / The new version did not install; putting the old one back',
+}
+
+const GIT_HOSTS: Record<string, string> = { github: 'github.com', gitlab: 'gitlab.com', bitbucket: 'bitbucket.org' }
+
+/**
+ * The repository directory of a Git spec pinned to one full commit, spelled the
+ * way the host compares them (`github.com/owner/repo`), or null for anything
+ * else — a floating spec, a path selector, an address the host would read
+ * differently. Only used to match a spec to the bundle it replaces; the host
+ * checks the same thing again before it changes anything.
+ */
+function pinnedGitOrigin(spec: string): string | null {
+  const hash = spec.indexOf('#')
+  if (hash === -1 || !/^[0-9a-f]{40}$/i.test(spec.slice(hash + 1))) return null
+  let location = spec.slice(0, hash)
+  const shorthand = /^(github|gitlab|bitbucket):([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/i.exec(location)
+  if (shorthand !== null) location = `${GIT_HOSTS[shorthand[1]!.toLowerCase()]!}/${shorthand[2]!}`
+  else if (/^(?:git\+)?https?:\/\/[^@]+$/i.test(location)) location = location.replace(/^git\+/i, '').replace(/^https?:\/\//i, '')
+  else return null
+  return location.replace(/\/+$/, '').replace(/\.git$/i, '').replace(/^[^/]+/, host => host.toLowerCase())
+}
+
+/** One update the host can do in place, decided before anything is asked of it. */
+interface InPlaceUpdate {
+  name: string
+  from: string
+  to: string
+  /** The Git spec the host needs for a Git bundle; absent for a registry one. */
+  gitSpec?: string
+}
+
+/**
+ * Whether this spec is an update the host's `updateBundle` can do, and if so
+ * exactly which one. Null means "use the remove-and-install path", always
+ * safe: that is the only path on 0.2.1, and it is what handles everything the
+ * in-place call refuses by contract —
+ *
+ * - a version that is not newer (a downgrade, a re-install of the same one,
+ *   the update route's own rollback to the build from before);
+ * - a dist-tag or range instead of an exact version;
+ * - a package the host does not list as updatable (`update` absent): a link,
+ *   a floating Git spec, an `npm:` alias, an installation-owned package;
+ *
+ * The market itself is NOT on that list any more. It used to be (#900: with
+ * HMR the host removes the bundle first, which unloads the code that was going
+ * to install the new one), because the pair was driven from here, step by
+ * step. `updateBundle` runs the pair inside the host, which does not care that
+ * the caller is gone; what is left to handle is the request that asked, see
+ * `updateInPlace`. A host without `updateBundle` never reaches this code and
+ * keeps the market's own overlay (`updateMarketInPlace`).
+ */
+async function planInPlaceUpdate(
+  manager: OfficialPluginManagerLike,
+  spec: string,
+  context?: UpdateContext,
+): Promise<InPlaceUpdate | null> {
+  // Why a spec went the old way, in the log: "did it use updateBundle" is the
+  // first thing a bug report about an update has to answer.
+  const decline = (reason: string): null => {
+    logEvent('info', 'update-in-place', `${spec}: not updated in place (${reason}); using remove and install`)
+    return null
+  }
+  if (typeof manager.updateBundle !== 'function' || typeof manager.listBundles !== 'function') return null
+  let rows: ManagedBundleRow[]
+  try {
+    rows = await manager.listBundles()
+  } catch {
+    // Reading the profile failed: the ordinary path reports that in its own words.
+    return decline('the host could not list its bundles')
+  }
+  if (!Array.isArray(rows)) return decline('the host listed no bundles')
+  const named = registryNameOf(spec)
+  let row: ManagedBundleRow | undefined
+  let to = ''
+  let gitSpec: string | undefined
+  if (named !== undefined) {
+    row = rows.find(entry => entry.name === named)
+    if (row?.update !== 'registry') return decline(row === undefined ? 'not an installed bundle' : 'the host does not list it as updatable from a registry')
+    to = targetVersionOf(spec)
+    if (to === '') return decline('the target is not an exact version')
+  } else {
+    const origin = pinnedGitOrigin(spec)
+    if (origin === null) return decline('not a Git spec pinned to one commit')
+    row = rows.find(entry => entry.update === 'git' && typeof entry.source === 'string' && pinnedGitOrigin(entry.source) === origin)
+    if (row === undefined) return decline('no installed Git bundle comes from that repository commit pin')
+    if (context?.gitVersionAt === undefined) return decline('the commit version cannot be read here')
+    try {
+      to = (await context.gitVersionAt(spec)) ?? ''
+    } catch {
+      to = ''
+    }
+    if (to === '') return decline('the commit version could not be read')
+    gitSpec = spec
+  }
+  const from = row.version
+  if (typeof from !== 'string' || !isSemver(from) || !isSemver(to)) return decline('a version is not a semver')
+  if (compareSemver(to, from) <= 0) return decline(`${to} is not newer than ${from}`)
+  return { name: row.name, from, to, ...(gitSpec === undefined ? {} : { gitSpec }) }
+}
+
+/** `applied`, `restart-required` and `overridden` are the answers that mean the change was kept. */
+function kept(result: { application: string } | undefined): boolean {
+  return result?.application === 'applied' || result?.application === 'restart-required' || result?.application === 'overridden'
+}
+
+/**
+ * Update one bundle with the host's `updateBundle`: one call that checks the
+ * target, swaps the versions and, when the new one does not install, puts the
+ * old one back by itself.
+ *
+ * What stays of the old machinery, and why:
+ *
+ * - No second journal phase. The remove-then-install pair is the host's now,
+ *   and it undoes its own half-done work, so the market has nothing in between
+ *   to record. But the host's undo is still only as durable as its process: if
+ *   the host dies, or the market stops waiting, between its removal and its
+ *   reinstall, the package is gone from disk exactly as in #928. So ONE record
+ *   brackets the call and is cleared the moment the answer proves the profile
+ *   whole (updated, or old version back, or never touched); the next start
+ *   reconciles from disk, as it always did, when no answer ever came.
+ * - The deadline stays, now around the one call (`IN_PLACE_UPDATE_DEADLINE_MS`).
+ *
+ * Returns null when the host refuses the spec itself (`invalid-spec` at the
+ * check, before it changed anything): the caller then takes the
+ * remove-and-install path, which is today's behavior for that spec.
+ */
+async function updateInPlace(
+  manager: OfficialPluginManagerLike,
+  plan: InPlaceUpdate,
+  options: { requestId?: string; registry?: string },
+  context?: UpdateContext,
+): Promise<ManagedResult | null> {
+  const spec = plan.gitSpec ?? `${plan.name}@${plan.to}`
+  const record = context?.journal.begin({
+    profile: context.profile,
+    name: plan.name,
+    from: plan.from,
+    to: plan.to,
+    spec,
+  })
+  const settle = (): void => { if (record !== undefined) context?.journal.finish(record.id) }
+  // The line a bug report needs to tell which path an update took.
+  logEvent('info', 'update-in-place', `${plan.name} ${plan.from} -> ${plan.to}: asking the host to update it in place`)
+  progress.lastLine = UPDATE_STEP_LINES.checking!
+  const unwatch = options.requestId === undefined
+    ? undefined
+    : context?.watchUpdateSteps?.(options.requestId, step => {
+      const line = UPDATE_STEP_LINES[step]
+      if (line !== undefined) progress.lastLine = line
+    })
+  let outcome: ManagedUpdateResult
+  try {
+    outcome = await withDeadline(
+      trackManagerWrite(manager.updateBundle!(plan.name, plan.to, {
+        ...(options.registry === undefined ? {} : { registry: options.registry }),
+        ...(plan.gitSpec === undefined ? {} : { spec: plan.gitSpec }),
+        ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
+      })),
+      IN_PLACE_UPDATE_DEADLINE_MS,
+      `update ${plan.name}`,
+    )
+  } catch (error) {
+    if (error instanceof DeadlineExceeded) return interrupted()
+    // A call that threw never reported a result, which this host does only
+    // before it changes anything (the profile could not be read, the manager
+    // was disposed). The record stays unless the disk shows the old build.
+    if (context !== undefined && readInstalledVersion(context.profile, plan.name, context.profileDirectory) === plan.from) settle()
+    throw error
+  } finally {
+    // The listener hangs off the context that asked, which a self-update has
+    // already disposed by now; letting go of it must never decide the answer.
+    try { unwatch?.() } catch { /* nothing left to release */ }
+  }
+  const last = outcome.result
+  logEvent('info', 'update-in-place', `${plan.name}: the host answered at step ${outcome.step}: ${last.application}${managementCode(last.error) === undefined ? '' : ` (${managementCode(last.error)!})`}${outcome.restore === undefined ? '' : `; restore ${outcome.restore.application}`}`)
+  const asManaged = (result: typeof last): ManagedResult => ({
+    application: result.application,
+    ...(result.error === undefined ? {} : { error: result.error }),
+    ...(result.packageResult === undefined ? {} : { packageResult: result.packageResult }),
+  })
+  // The market updating ITSELF. With HMR the host removes the running bundle
+  // before it installs the new one, so by the time this call answers, this
+  // very instance has been disposed and its replacement is serving (measured
+  // on dsh 0.2.2-rc.5 and 0.2.3-alpha.2, tests/web/desktop-update.e2e.ts).
+  // What survives is this closure: it can still answer the HTTP request —
+  // the response belongs to the web server, not to the plugin — but anything
+  // that asks the disposed context for a service (`loader`, to read what is
+  // live) throws, which turned a finished update into a 500. The caller is
+  // told, and answers from the result alone. Without HMR the host installs
+  // over the running version instead (`restart-required`), nothing is
+  // disposed, and the ordinary reply applies.
+  const tornDown = SELF_NAMES.has(plan.name) && outcome.step === 'install'
+    && (kept(last) ? last.application !== 'restart-required' : outcome.restore !== undefined)
+  const swapped = <T extends ManagedResult>(result: T): T => tornDown ? { ...result, selfSwapped: true } : result
+  if (outcome.step === 'install' && kept(last)) {
+    settle()
+    if (last.application === 'restart-required') markRestartPending()
+    return swapped({ ...asManaged(last), ...(last.application === 'applied' ? { liveSwap: true } : {}) })
+  }
+  if (outcome.step === 'check') {
+    settle()
+    // The host cannot express this update at all (not newer, not updatable):
+    // nothing changed, and the ordinary path can still do it.
+    if (managementCode(last.error) === 'invalid-spec') return null
+    return { ...asManaged(last), untouched: true }
+  }
+  if (outcome.step === 'remove') {
+    // The removal itself failed or was cancelled, so nothing was unloaded.
+    settle()
+    if (last.application === 'failed' && managementCode(last.error) === 'bundle-in-use' && restartPending()) {
+      return { ...asManaged(last), needsRestart: true, untouched: true }
+    }
+    return { ...asManaged(last), untouched: true }
+  }
+  // The install failed or was cancelled. With HMR the host removed the old
+  // version first and has tried to put it back.
+  if (outcome.restore !== undefined) {
+    if (kept(outcome.restore)) {
+      settle()
+      return swapped({
+        ...asManaged(last),
+        untouched: true,
+        note: '旧版本已经装回，没有丢东西。 / The old version was put back; nothing was lost.',
+      })
+    }
+    // Neither version is installed. Do not ask the same host to restore it
+    // again from the route (it just failed to) and keep the record, re-aimed
+    // at the OLD version: the target just failed to install, and the next
+    // start's repair must put back what the user had, not retry what failed.
+    if (record !== undefined && context !== undefined) {
+      context.journal.begin({ profile: context.profile, name: plan.name, from: plan.from, to: plan.from, spec: `${plan.name}@${plan.from}` })
+    }
+    return swapped({
+      ...asManaged(last),
+      repairOnRestart: true,
+      note: `旧版本也没能装回，这个插件现在是缺的。重新打开 DSH 后市场会自动装回 ${plan.from}；也可以现在从「设置 → 插件」重新安装它。 / The old version could not be put back either, so the plugin is missing right now. Reopen DSH and the market will reinstall ${plan.from}, or reinstall it from Settings → Plugins now.`,
+    })
+  }
+  // No restore ran: a host without HMR installs over the running version and
+  // the failure left the old files in place. That is the ordinary failed
+  // install, and the route's own rollback applies as it always did.
+  settle()
+  return asManaged(last)
 }
 
 /**
@@ -408,6 +761,14 @@ async function installOrReinstall(
   context?: UpdateContext,
 ): Promise<ManagedResult> {
   const install = (): Promise<ManagedResult> => trackManagerWrite(manager.installBundle(spec, options))
+  // dsh 0.2.2+ replaces an installed bundle in one call. Everything it cannot
+  // express falls through to the remove-and-install path below, unchanged.
+  // (Not awaited on a manager without it: the install call stays synchronous.)
+  const plan = typeof manager.updateBundle === 'function' ? await planInPlaceUpdate(manager, spec, context) : null
+  if (plan !== null) {
+    const updated = await updateInPlace(manager, plan, options, context)
+    if (updated !== null) return updated
+  }
   let first: ManagedResult
   try {
     // Bounded like every other manager call: a plain install the host never
@@ -512,12 +873,12 @@ const OPERATION_SLOT = Symbol.for('dshmarket.officialDesktop.operation')
 const WRITE_SLOT = Symbol.for('dshmarket.officialDesktop.packageWrites')
 
 /** Keep the native promises across a market reload, including after a route deadline. */
-function pendingManagerWrites(): Set<Promise<ManagedResult>> {
-  const processState = globalThis as { [WRITE_SLOT]?: Set<Promise<ManagedResult>> }
+function pendingManagerWrites(): Set<Promise<unknown>> {
+  const processState = globalThis as { [WRITE_SLOT]?: Set<Promise<unknown>> }
   return processState[WRITE_SLOT] ??= new Set()
 }
 
-function trackManagerWrite(work: Promise<ManagedResult>): Promise<ManagedResult> {
+function trackManagerWrite<T>(work: Promise<T>): Promise<T> {
   const pending = pendingManagerWrites()
   pending.add(work)
   const remove = () => pending.delete(work)
@@ -581,6 +942,9 @@ export function createOfficialDesktopRuntime(
   // Official Desktop publishes its bundled pnpm here. Used only to overlay
   // the market itself (#982). Other packages still go through the manager.
   packageManager?: HostPackageManager | null,
+  // What only the host process can supply to an in-place update (see
+  // `UpdateContext`); both are optional, and an update without them still works.
+  hooks?: Pick<UpdateContext, 'gitVersionAt' | 'watchUpdateSteps'>,
 ): OfficialDesktopRuntime {
   let disposed = false
   let repairing = false
@@ -598,6 +962,8 @@ export function createOfficialDesktopRuntime(
       journal,
       packageManager,
       onOwnChild: running => { ownsChild = running },
+      ...(hooks?.gitVersionAt === undefined ? {} : { gitVersionAt: hooks.gitVersionAt }),
+      ...(hooks?.watchUpdateSteps === undefined ? {} : { watchUpdateSteps: hooks.watchUpdateSteps }),
     }
 
   const busy = (): boolean => active !== undefined || repairing || runningOperation() !== undefined
@@ -665,7 +1031,9 @@ export function createOfficialDesktopRuntime(
       // "working" forever, while its pnpm had in fact finished seconds later.
       // The update path has had these deadlines for exactly that reason; an
       // ordinary install or uninstall needs the same bound.
-      const deadline = command === 'remove' ? REMOVE_DEADLINE_MS : OPERATION_DEADLINE_MS
+      const deadline = command === 'remove'
+        ? REMOVE_DEADLINE_MS
+        : typeof manager.updateBundle === 'function' ? IN_PLACE_OPERATION_DEADLINE_MS : OPERATION_DEADLINE_MS
       operation = withDeadline(
         command === 'remove'
           ? trackManagerWrite(manager.removeBundle(target))
@@ -696,7 +1064,8 @@ export function createOfficialDesktopRuntime(
         result.packageResult?.output ?? '',
         result.application === 'overridden' ? 'the plugin manager kept this change, but another layer overrides whether it is enabled' : '',
       ].filter(Boolean).join('\n')
-      const message = ok ? '' : result.needsRestart === true ? RESTART_FIRST_MESSAGE : detail(result.error)
+      const account = result.needsRestart === true ? RESTART_FIRST_MESSAGE : detail(result.error)
+      const message = ok ? '' : result.note === undefined ? account : `${account} ${result.note}`
       if (!ok) progress.error = message
       // A later success for this package outdates what start-up repair said
       // about it earlier in this process.
@@ -721,12 +1090,15 @@ export function createOfficialDesktopRuntime(
         // profile is untouched, and the route must not try to "restore" it.
         // A pre-install host check (#912) is the same shape even when the
         // manager attached a package result to its refusal.
-        wroteNothing: !ok && !repairOnRestart && (result.packageResult === undefined || prePnpmHostFailure(result)),
+        wroteNothing: !ok && !repairOnRestart
+          && (result.untouched === true || result.packageResult === undefined || prePnpmHostFailure(result)),
         ...(repairOnRestart ? { repairOnRestart: true } : {}),
         // The manager's own code, kept machine-readable (#909): a client can
         // tell a self-update refusal from an ordinary failure.
         ...(ok ? {} : { refusalCode: managementCode(result.error) }),
         ...(result.needsRestart === true ? { needsRestart: true } : {}),
+        ...(result.selfSwapped === true ? { selfSwapped: true } : {}),
+        ...(ok && result.liveSwap === true ? { liveSwap: true } : {}),
       }
     }, (error): InstallResult => {
       const message = detail(error)

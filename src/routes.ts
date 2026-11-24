@@ -7350,6 +7350,40 @@ export function mountMarketRoutes(
               throw error
             }
             drainPhaseOf(request)?.('verifying')
+            if (result.selfSwapped === true) {
+              // The host swapped the running market for the new build while it
+              // ran this very request (see `updateInPlace`): this instance is
+              // disposed, and everything below asks it for services it no
+              // longer has — the loader inventory above all. The answer is
+              // already in the result, and the new instance is serving.
+              invalidateUpdates()
+              if (result.exitCode === 0) {
+                logEvent('info', 'update', `${name}: the host swapped in the new build while answering this request`)
+                sendJson(response, 200, {
+                  ok: true,
+                  name,
+                  selfSwapped: true,
+                  // The page is still the old one: say so, so the market's own
+                  // "apply now" prompt (which only reloads the page here) shows.
+                  activation: {
+                    [name]: {
+                      state: 'restart',
+                      bundle: true,
+                      hot: false,
+                      reasons: ['新版本已经换上，刷新页面就能用上。 / The new version is already running; reload the page to use it.'],
+                    },
+                  },
+                })
+              } else {
+                logEvent('error', 'update', `${name}: the host replaced the running market and the update did not hold — ${result.stderr.slice(0, 400)}`)
+                sendJson(response, 502, {
+                  ok: false,
+                  error: result.stderr,
+                  ...(result.refusalCode === undefined ? {} : { failureCode: result.refusalCode }),
+                })
+              }
+              return
+            }
             if (checkoutSource !== null && result.repairOnRestart === true) {
               // A direct add can time out without a remove/reinstall journal
               // (#928). Wait for the manager before reattaching a checkout
@@ -7789,11 +7823,17 @@ export function mountMarketRoutes(
               // Remembered, not just reported: the listing recomputes
               // activation on every page load and would otherwise call this
               // live again the moment the user refreshed.
-              if (wasLive) replacedWhileLive.add(name)
+              // A host that swaps the new build in itself (HMR: `applied`) left
+              // no old module running, so there is nothing stale to remember
+              // or to ask a restart for — and the remembered flag would keep
+              // saying "restart" on every later page load.
+              const staleModule = wasLive && result.liveSwap !== true
+              if (staleModule) replacedWhileLive.add(name)
+              else replacedWhileLive.delete(name)
               activation = {
                 [name]: activationAfterReplace(
                   verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
-                  wasLive,
+                  staleModule,
                 ),
               }
               const after = assessProfile(config.profile, activeProfileDir)
