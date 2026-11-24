@@ -21,6 +21,7 @@ import {
 } from './market-data.ts'
 import { drop, enqueue, type OperationRecord, patch as patchRecord } from './operations.ts'
 import { blockedSessions, readRecentFlag, withoutHostProjection, writeRecentFlag } from './market-helpers.ts'
+import { withSponsoredFirst } from './sponsored-plugins.ts'
 import { DEFAULT_PAGE_SIZE, RECENT_COLLAPSED_KEY, RECENT_HIDDEN_KEY, RECENT_STRIP_LIMIT } from './market-constants.ts'
 import { usePagination, useShownCount } from './MarketListControls.tsx'
 import { discoveryScan } from './MarketImages.tsx'
@@ -125,9 +126,9 @@ export function useMarketInstall(c: MarketInstallIn) {
     () => data === null || tab !== 'discover' || q.trim() !== '' || cat !== 'all' || source !== 'all' || timeRange !== 'all'
       || sortField !== 'downloads' || sortDir !== 'desc'
       ? []
-      : visiblePlugins(data.plugins, {
+      : withSponsoredFirst(data.plugins, visiblePlugins(data.plugins, {
           category: 'all', query: '', lang, sort: 'downloads-desc', sinceDays: 7,
-        }).filter(plugin => !pluginBlocked(plugin)),
+        }).filter(plugin => !pluginBlocked(plugin)), plugin => !pluginBlocked(plugin)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data, tab, q, cat, source, timeRange, sortField, sortDir, lang, blockedNameSet, installed, repoIdentities, repoHints])
   const [recentCollapsed, setRecentCollapsed] = useState(() => readRecentFlag(RECENT_COLLAPSED_KEY))

@@ -25,11 +25,15 @@
     "utm": {
       "readme": "readme",
       "site": "website",
-      "market": "market_search"
+      "market": "market_search",
+      "plugin": "market_first_plugin"
     },
     "siteWidth": 104,
     "markWidth": 64,
-    "readmeBox": 150
+    "readmeBox": 150,
+    "plugins": [
+      "@model-go/dsh-modelgo-provider"
+    ]
   },
   {
     "id": "qiniu",

@@ -236,23 +236,23 @@
 .recentRow::-webkit-scrollbar-track{background:transparent}
 /* ~3.25 tiles at the panel width, so ~800px still peeks the next card.
    24px is three 8px gaps (between 1–2, 2–3, and 3–the-peek). */
-.recentRow > *{box-sizing:border-box;flex:0 0 auto;width:min(320px,calc((100% - 24px) / 3.25));min-width:220px}
+.recentRow > *{box-sizing:border-box;flex:0 0 auto;width:min(380px,calc((100% - 16px) / 2.6));min-width:260px}
 /* #940: collapse clips in place (max-height + visibility, NOT display:none
    and NOT unmounting). visibility keeps the clipped tiles out of the tab
    order and the accessibility tree. Compound selector so overflow:hidden
    beats .recentRow's overflow-x:auto by specificity, not source order. */
 .recentRow.recentCollapsed{max-height:0;overflow:hidden;visibility:hidden;margin-bottom:0;padding-bottom:0}
-.recentTile{display:flex;flex-direction:column;justify-content:space-between;gap:4px;height:80px;box-sizing:border-box;overflow:hidden;padding:8px 12px;background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-lg,16px);transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
+.recentTile{display:flex;flex-direction:column;justify-content:space-between;gap:8px;height:128px;box-sizing:border-box;overflow:hidden;padding:12px 14px;background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-lg,16px);transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
 .recentTile .installBtn.installBtn{height:24px;min-height:24px;padding:0 8px}
-.recentAv.recentAv{width:24px;height:24px;font-size:11px;flex-shrink:0}
-.recentTitle{display:flex;align-items:center;gap:8px;min-width:0}
+.recentAv.recentAv{width:40px;height:40px;font-size:15px;flex-shrink:0}
+.recentTitle{display:flex;align-items:center;gap:10px;min-width:0}
 .recentTitle > :last-child{flex-shrink:0}
 .recentName{min-width:0;flex:1}
-.recentTitle .nm{font-size:14px;line-height:20px}
+.recentTitle .nm{font-size:15px;line-height:22px;font-weight:600}
 .recentBottom{display:flex;align-items:flex-end;gap:8px;min-width:0}
 .recentBottom > :last-child{flex-shrink:0;margin-left:auto}
 .recentBottom > :not(:last-child){min-width:0;flex:1}
-.recentDesc{margin:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.recentDesc{margin:0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-secondary,#6b7280);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .recentBottom .cardMore{padding:0}
 .recentHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 8px;padding:0 4px}
 .recentHead .favoritesSectionHead{margin:0;padding:0;font-weight:600}
