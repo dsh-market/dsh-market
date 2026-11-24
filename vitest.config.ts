@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     // Strips the developer's proxy variables first: with one exported, the
     // fetch stubs below marketFetch never see a request (tests/setup/no-proxy.ts).
-    setupFiles: ['tests/setup/no-proxy.ts', 'tests/setup/undici-fetch.ts'],
+    setupFiles: ['tests/setup/no-proxy.ts', 'tests/setup/undici-fetch.ts', 'tests/setup/jsdom-storage.ts'],
     include: ['tests/**/*.spec.ts', 'tests/**/*.spec.tsx'],
     exclude: ['tests/**/*.compat.spec.ts', '**/node_modules/**'],
     pool: 'forks',
