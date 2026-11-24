@@ -15,6 +15,8 @@ export const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
 /** Discover grid page-size choices — the catalog grows daily, so cap each page. */
 export const PAGE_SIZES = [24, 48, 96]
 export const DEFAULT_PAGE_SIZE = 24
+/** Where the chosen page size is kept, so it survives closing the market. */
+export const PAGE_SIZE_KEY = 'dshm-page-size'
 export const WEBDAV_STORAGE_KEY = 'dshm-webdav'
 
 /** Same cap as `MAX_NOTE` in hot.ts; the server trims anything longer. */

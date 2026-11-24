@@ -2575,3 +2575,27 @@ describe('shippedInsertedRowIds (#1012)', () => {
     }
   })
 })
+
+describe('parsePatchRows groupGateIds (#1305)', () => {
+  it('names a group row gated by an expression, and nothing else', () => {
+    const text = [
+      '- insert:',
+      '    - id: m-bundle',
+      '      group: true',
+      '      disabled: !!js "false"',
+      '      config:',
+      '        - id: m',
+      '          name: dsh-m',
+      '    - id: m-leaf',
+      '      disabled: !!js "false"',
+      '    - id: m-plain-group',
+      '      group: true',
+      '      config:',
+      '        - id: m-child',
+      '',
+    ].join('\n')
+    const rows = parsePatchRows(text)
+    expect(rows.groupGateIds).toEqual(['m-bundle'])
+    expect(rows.expressionIds).toEqual(expect.arrayContaining(['m-bundle', 'm-leaf']))
+  })
+})

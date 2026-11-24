@@ -1057,6 +1057,11 @@ export function bundleExpressionRowIds(dir: string): string[] {
   return declaredPatchRowIds(dir, 'expressionIds')
 }
 
+/** The `group: true` rows a package gates with an expression (#1305). */
+export function bundleGroupGateRowIds(dir: string): string[] {
+  return declaredPatchRowIds(dir, 'groupGateIds')
+}
+
 /**
  * Row ids a package's own patch sources declare for one role — the loop the
  * two readers above and below share.
@@ -1074,7 +1079,7 @@ export function bundleExpressionRowIds(dir: string): string[] {
  * one (`readBundlePatchRows`) refuses the whole declaration, because the host
  * loads none of a patch it cannot read completely.
  */
-function declaredPatchRowIds(dir: string, role: 'insertedIds' | 'disabledIds' | 'expressionIds'): string[] {
+function declaredPatchRowIds(dir: string, role: 'insertedIds' | 'disabledIds' | 'expressionIds' | 'groupGateIds'): string[] {
   const ids = new Set<string>()
   const read = (file: string): void => {
     try {
@@ -1129,12 +1134,13 @@ export function shippedInsertedRowIds(dir: string): string[] {
  * answer with a literal of its own, because the host re-evaluates the
  * condition on every compose and no user-layer value can stand in for it.
  */
-export function parsePatchRows(text: string): { names: string[]; ids: string[]; insertedIds: string[]; disabledIds: string[]; expressionIds: string[] } {
+export function parsePatchRows(text: string): { names: string[]; ids: string[]; insertedIds: string[]; disabledIds: string[]; expressionIds: string[]; groupGateIds: string[] } {
   const names: string[] = []
   const ids: string[] = []
   const insertedIds: string[] = []
   const disabledIds: string[] = []
   const expressionIds: string[] = []
+  const groupGateIds: string[] = []
   {
     // CRLF too, for consistency with the hot-mount parser, which a
     // Windows-authored patch genuinely broke. Here it changes no outcome
@@ -1312,6 +1318,10 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
         // An expression-decided row is the third shape: neither opt-in nor
         // plain, and the market must not write over it (#1043).
         if (payloadIndent === null && rowDeclaresExpressionDisabled(i) && !expressionIds.includes(id[1])) expressionIds.push(id[1])
+        // The parent of a package's components, gated by an expression: its
+        // switch is the market's alone, because the plugins page toggles the
+        // components under it, never the group itself (#1305).
+        if (payloadIndent === null && rowDeclaresExpressionDisabled(i) && rowDeclaresGroup(i) && !groupGateIds.includes(id[1])) groupGateIds.push(id[1])
         // A top-level `- id:` row closes any open insert block: it is a
         // sibling of `- insert:`, not a member of it.
         if (insertIndent !== null && indent > insertIndent) {
@@ -1322,7 +1332,7 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
       }
     }
   }
-  return { names, ids, insertedIds, disabledIds, expressionIds }
+  return { names, ids, insertedIds, disabledIds, expressionIds, groupGateIds }
 }
 
 /**

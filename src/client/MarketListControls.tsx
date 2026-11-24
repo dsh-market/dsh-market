@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import { Button, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_KEY,
   PAGE_SIZES,
   SORT_DIR_OPTIONS,
   SORT_FIELD_OPTIONS,
@@ -38,6 +39,16 @@ function useResettableCount(initial: number, deps: readonly unknown[]) {
   return [count, setCount] as const
 }
 
+/** The page size the reader chose last time; anything unexpected is the default. */
+export function storedPageSize(): number {
+  try {
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY))
+    return PAGE_SIZES.includes(saved) ? saved : DEFAULT_PAGE_SIZE
+  } catch {
+    return DEFAULT_PAGE_SIZE
+  }
+}
+
 /**
  * Page/page-size state shared by every paged list in this file (Discover,
  * Themes) — each caller owns its OWN instance (their filters are
@@ -54,7 +65,7 @@ export function usePagination(count: number, resetDeps: readonly unknown[], scro
   changePageSize: (size: number) => void
 } {
   const [page, setPage] = useResettableCount(1, resetDeps)
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSize] = useState(storedPageSize)
   const totalPages = Math.max(1, Math.ceil(count / pageSize))
   // Clamp in case the list shrank while the user was on a later page.
   const currentPage = Math.min(page, totalPages)
@@ -64,6 +75,7 @@ export function usePagination(count: number, resetDeps: readonly unknown[], scro
   }
   const changePageSize = (size: number) => {
     setPageSize(size)
+    try { localStorage.setItem(PAGE_SIZE_KEY, String(size)) } catch { /* storage unavailable: the choice lasts until the market closes */ }
     setPage(1)
     scrollToTop()
   }

@@ -49,7 +49,7 @@ import {
   hasUnsettledPackageRun, loadHostProfileLock, PendingCheckoutLinks, withIdleProfile,
   type CheckoutRecoveryEntry, type CheckoutRecoveryStatus, type PendingCheckoutLink,
 } from './pending-checkout-links.ts'
-import { addProfileBundle, bundleExpressionRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, dropReleaseAgeExcludes, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, restoreRemovedProfileBundle, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, bundleExpressionRowIds, bundleGroupGateRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, dropReleaseAgeExcludes, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, restoreRemovedProfileBundle, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { DrainCoordinator, DrainNoop, DrainRefusal, type DrainExecutionResult, type DrainIntent, type DrainMutationGate } from './drain.ts'
@@ -1524,7 +1524,15 @@ export function mountMarketRoutes(
     const allOff = choices !== null && choices.ownOff.size === componentNames.size
     // Old market builds stored only a state flag and unmarked, standalone
     // rows. Keep their ON path for that otherwise indistinguishable format.
-    const userAllOff = allOff && !(wasDisabled && choices.legacyAllOff)
+    // A literal `disabled: true` on a `group: true` row the bundle gates with
+    // an expression (as dsh-mnemon ships) is never the user's choice on the
+    // plugins page, which toggles the components under the group and reports
+    // the group's literal "saved but overridden". An older market wrote it when it switched the package off, so it
+    // is residue to clean, and sending the user to the page that cannot help is
+    // the dead end #1305 reported.
+    const userPatchDisables = allOff ? readUserPatchState(userPatchPath).disables : []
+    const gateHeldShut = bundleGroupGateRowIds(packageDir).some(rowId => userPatchDisables.includes(rowId))
+    const userAllOff = allOff && !(wasDisabled && choices.legacyAllOff) && !gateHeldShut
     const initial: LayerSwitch = {
       ok: true, reason: undefined, patchRows: componentRows,
       patchWrite: null, carrierRows, isCarrier, bundleSwitch: { ok: true, reason: null },

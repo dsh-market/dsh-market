@@ -9498,6 +9498,58 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(readFileSync(patchPath, 'utf8')).not.toContain('loop-tui')
   })
 
+  it('a group the bundle gates with an expression comes back after the market switched it off (#1305)', async () => {
+    // dsh-mnemon's shape: one `group: true` row whose `disabled` is an
+    // expression, with the components nested under it. Switching the package
+    // off wrote a literal `disabled: true` on that row; switching it on
+    // treated the row as "decided by its expression" and left the market's own
+    // literal in place, so the group stayed closed under every boot.
+    await installNpm('dsh-loop')
+    mkdirSync(join(fake.profileDir, 'node_modules', 'dsh-loop'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: loop-bundle',
+      '      name: dsh-loop/bundle',
+      '      group: true',
+      '      disabled: !!js >-',
+      "        (() => false)()",
+      '      config:',
+      '        - id: loop',
+      '          name: dsh-loop',
+      '        - id: loop-source',
+      '          name: dsh-loop-source',
+      '',
+    ].join('\n'))
+    const patchPath = join(fake.profileDir, 'cordis.patch.yml')
+    writeFileSync(patchPath, '[]\n')
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    expect(off.status).toBe(200)
+    const afterOff = readFileSync(patchPath, 'utf8')
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(on.status).toBe(200)
+    const afterOn = readFileSync(patchPath, 'utf8')
+    expect(afterOff).toContain('loop-bundle')
+    expect(afterOn).not.toMatch(/disabled: true/u)
+
+    // The same package switched off by an older market, which wrote plain rows
+    // without the package-switch marker (the reporter's file): switching it on
+    // has to clear the group row's literal as well as the components'.
+    writeFileSync(patchPath, [
+      '- id: loop-bundle',
+      '  disabled: true',
+      '- id: loop',
+      '  disabled: true',
+      '- id: loop-source',
+      '  disabled: true',
+      '',
+    ].join('\n'))
+    const again = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(again.status).toBe(200)
+    expect(readFileSync(patchPath, 'utf8')).not.toContain('loop-bundle')
+  })
+
   it('still switches a package off through its own rows, opt-in or not', async () => {
     // The other half: a disable has to reach every row, or the package comes
     // back half-on.
