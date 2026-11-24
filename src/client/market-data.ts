@@ -2165,6 +2165,41 @@ export function compareInstalledRows(
   return sort === 'newest' ? right - left : left - right
 }
 
+/**
+ * Which column each card goes to, given the cards' measured heights in rank
+ * order. All but the last few go to the column that is shortest so far, which
+ * keeps the ranking reading top-down; the last few are tried in every
+ * arrangement and the one whose columns end closest together wins, because
+ * that is where a ragged bottom edge shows (at most 3^9 arrangements).
+ */
+export function balanceColumns(heights: readonly number[], columns: number, gap = 10): number[] {
+  const tail = Math.min(heights.length, columns === 2 ? 12 : 9)
+  const head = heights.length - tail
+  const height = (index: number): number => (heights[index] ?? 0) + gap
+  const depth = Array.from({ length: columns }, () => 0)
+  const placed: number[] = []
+  for (let index = 0; index < head; index += 1) {
+    let shortest = 0
+    for (let column = 1; column < columns; column += 1) if (depth[column]! < depth[shortest]!) shortest = column
+    depth[shortest]! += height(index)
+    placed.push(shortest)
+  }
+  let best: number[] = []
+  let bestSpread = Infinity
+  for (let code = 0; code < columns ** tail; code += 1) {
+    const trial = depth.slice()
+    const picks: number[] = []
+    for (let slot = 0, rest = code; slot < tail; slot += 1, rest = Math.floor(rest / columns)) {
+      const column = rest % columns
+      picks.push(column)
+      trial[column]! += height(head + slot)
+    }
+    const spread = Math.max(...trial) - Math.min(...trial)
+    if (spread < bestSpread - 1) { bestSpread = spread; best = picks }
+  }
+  return [...placed, ...best]
+}
+
 /** Masonry column count for a given content width. `maxColumns` caps Discover(3) vs Installed(2). */
 export function masonryColumnCount(width: number, maxColumns: number, minColWidth = 290, minColumns = 1): number {
   if (!Number.isFinite(width) || width <= 0) return minColumns

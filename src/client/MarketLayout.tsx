@@ -13,7 +13,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { githubRouteCandidates, masonryColumnCount, rememberGithubRoute, type Translate } from './market-data.ts'
+import { balanceColumns, githubRouteCandidates, masonryColumnCount, rememberGithubRoute, type Translate } from './market-data.ts'
 import css from './Market.module.css'
 import {
   IconChevronDownOutline14,
@@ -60,11 +60,35 @@ export function Masonry<T>({ items, render, maxColumns = 3, minColumns = 2, clas
     return () => observer.disconnect()
   }, [wide, maxColumns, minColumns])
   const masonryClass = [css.masonry, className].filter(Boolean).join(' ')
+  // Dealing alternately keeps the ranking readable, but cards differ a lot in
+  // height (screenshots, long descriptions), so the columns ended at very
+  // different depths and the bottom of a page looked ragged. After the first
+  // layout the cards are measured and each is placed, in rank order, into the
+  // column that is shortest at that point: the order still reads top-down,
+  // and the columns end within one card of each other. This runs in a layout
+  // effect, so the first paint is already the balanced one.
+  const [balanced, setBalanced] = useState<{ items: T[]; columns: number; assign: number[] } | null>(null)
+  const settled = balanced !== null && balanced.columns === columns
+    && balanced.items.length === items.length && balanced.items.every((item, index) => item === items[index])
+  const assign = settled ? balanced.assign : items.map((_item, index) => index % columns)
+  useLayoutEffect(() => {
+    const root = ref.current
+    if (settled || !wide || columns < 2 || root === null || root.children.length !== columns) return
+    const heights: number[] = []
+    for (let column = 0; column < columns; column += 1) {
+      const nodes = root.children[column]!.children
+      const dealt = items.filter((_item, index) => index % columns === column).length
+      if (nodes.length !== dealt) return
+      for (let slot = 0; slot < dealt; slot += 1) heights[slot * columns + column] = nodes[slot]!.getBoundingClientRect().height
+    }
+    const placed = balanceColumns(heights, columns)
+    setBalanced({ items, columns, assign: placed })
+  })
   if (!wide) {
     return <div className={masonryClass}><div className={css.masonryCol}>{items.map(render)}</div></div>
   }
   const buckets: T[][] = Array.from({ length: columns }, () => [])
-  items.forEach((item, index) => { buckets[index % columns]!.push(item) })
+  items.forEach((item, index) => { buckets[assign[index] ?? index % columns]!.push(item) })
   return (
     <div ref={ref} className={masonryClass}>
       {buckets.map((bucket, index) => (

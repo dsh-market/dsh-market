@@ -5169,6 +5169,43 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (left === right) return a.name.localeCompare(b.name);
 			return sort === "newest" ? right - left : left - right;
 		}
+		/**
+		* Which column each card goes to, given the cards' measured heights in rank
+		* order. All but the last few go to the column that is shortest so far, which
+		* keeps the ranking reading top-down; the last few are tried in every
+		* arrangement and the one whose columns end closest together wins, because
+		* that is where a ragged bottom edge shows (at most 3^9 arrangements).
+		*/
+		function balanceColumns(heights, columns, gap = 10) {
+			const tail = Math.min(heights.length, columns === 2 ? 12 : 9);
+			const head = heights.length - tail;
+			const height = (index) => (heights[index] ?? 0) + gap;
+			const depth = Array.from({ length: columns }, () => 0);
+			const placed = [];
+			for (let index = 0; index < head; index += 1) {
+				let shortest = 0;
+				for (let column = 1; column < columns; column += 1) if (depth[column] < depth[shortest]) shortest = column;
+				depth[shortest] += height(index);
+				placed.push(shortest);
+			}
+			let best = [];
+			let bestSpread = Infinity;
+			for (let code = 0; code < columns ** tail; code += 1) {
+				const trial = depth.slice();
+				const picks = [];
+				for (let slot = 0, rest = code; slot < tail; slot += 1, rest = Math.floor(rest / columns)) {
+					const column = rest % columns;
+					picks.push(column);
+					trial[column] += height(head + slot);
+				}
+				const spread = Math.max(...trial) - Math.min(...trial);
+				if (spread < bestSpread - 1) {
+					bestSpread = spread;
+					best = picks;
+				}
+			}
+			return [...placed, ...best];
+		}
 		/** Masonry column count for a given content width. `maxColumns` caps Discover(3) vs Installed(2). */
 		function masonryColumnCount(width, maxColumns, minColWidth = 290, minColumns = 1) {
 			if (!Number.isFinite(width) || width <= 0) return minColumns;
@@ -16494,6 +16531,26 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				minColumns
 			]);
 			const masonryClass = [Market_module_css_default.masonry, className].filter(Boolean).join(" ");
+			const [balanced, setBalanced] = (0, react.useState)(null);
+			const settled = balanced !== null && balanced.columns === columns && balanced.items.length === items.length && balanced.items.every((item, index) => item === items[index]);
+			const assign = settled ? balanced.assign : items.map((_item, index) => index % columns);
+			(0, react.useLayoutEffect)(() => {
+				const root = ref.current;
+				if (settled || !wide || columns < 2 || root === null || root.children.length !== columns) return;
+				const heights = [];
+				for (let column = 0; column < columns; column += 1) {
+					const nodes = root.children[column].children;
+					const dealt = items.filter((_item, index) => index % columns === column).length;
+					if (nodes.length !== dealt) return;
+					for (let slot = 0; slot < dealt; slot += 1) heights[slot * columns + column] = nodes[slot].getBoundingClientRect().height;
+				}
+				const placed = balanceColumns(heights, columns);
+				setBalanced({
+					items,
+					columns,
+					assign: placed
+				});
+			});
 			if (!wide) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: masonryClass,
 				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -16503,7 +16560,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 			const buckets = Array.from({ length: columns }, () => []);
 			items.forEach((item, index) => {
-				buckets[index % columns].push(item);
+				buckets[assign[index] ?? index % columns].push(item);
 			});
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				ref,
