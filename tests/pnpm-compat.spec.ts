@@ -221,7 +221,24 @@ describe('classifyPnpmFailure', () => {
     // Unscoped, and a registry mounted under a path prefix: two segments
     // before `/-/` are not automatically a scope.
     expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://artifactory.example/api/npm/npm-remote/lodash/-/lodash-4.17.21.tgz: Not Found - 404')?.message)
-      .toContain('（lodash）')
+      .toContain('lodash 4.17.21')
+  })
+
+  it('says "the route has not synced it yet" for a missing download, not "delete the ghost line"', () => {
+    // Real: the Tencent mirror listed dshmarket 1.81.1 an hour after it was
+    // published but 404ed its tarball, and the market's own update told the
+    // user to delete `dshmarket` from package.json by hand.
+    const lag = classifyPnpmFailure('ERR_PNPM_FETCH_404  GET https://mirrors.cloud.tencent.com/npm/dshmarket/-/dshmarket-1.81.1.tgz: Not Found - 404')
+    expect(lag?.code).toBe('fetch-404')
+    expect(lag?.pkg).toBe('dshmarket-1.81.1.tgz')
+    expect(lag?.message).toContain('dshmarket 1.81.1')
+    expect(lag?.message).toContain('还没同步')
+    expect(lag?.message).not.toContain('幽灵依赖')
+    expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/@types%2Fretry/-/retry-0.12.0.tgz: Not Found - 404')?.message)
+      .toContain('@types/retry 0.12.0')
+    // The package document itself missing is still the ghost-entry sentence.
+    expect(classifyPnpmFailure('ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/gone-pkg: Not Found - 404')?.message)
+      .toContain('幽灵依赖')
   })
 
   it('names a patch that no longer applies, and says the package went in unpatched (#222)', () => {

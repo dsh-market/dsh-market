@@ -959,7 +959,26 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
     // tell "this mirror has not synced that release" from a ghost entry — but
     // a `.tgz` file name is not something the user can look up in their
     // package.json, so the sentence names the package in the path above it.
-    const shown = pkg === undefined || !/\.tgz$/u.test(pkg) ? pkg : tarballOwner(output) ?? pkg
+    const owner = pkg === undefined || !/\.tgz$/u.test(pkg) ? undefined : tarballOwner(output)
+    const shown = owner ?? pkg
+    // A 404 for the DOWNLOAD of a version the registry's document lists is a
+    // mirror that has the release's metadata but not its file yet — the
+    // Tencent mirror, an hour after dshmarket 1.81.1 was published, refused
+    // the market's own update this way. A ghost entry 404s on the package
+    // document instead. "Delete that line from package.json" is the wrong
+    // advice here: for the market it would delete the market. Same code, so
+    // every recovery that keys on `fetch-404` still runs.
+    const tarballVersion = owner === undefined || pkg === undefined
+      ? undefined
+      : pkg.slice(owner.slice(owner.lastIndexOf('/') + 1).length + 1, -'.tgz'.length) || undefined
+    if (owner !== undefined && tarballVersion !== undefined) {
+      return {
+        code: 'fetch-404',
+        recoverable: false,
+        pkg,
+        message: `当前下载线路暂时拿不到 ${owner} ${tarballVersion} 的安装包。常见原因是线路还没同步刚发布的版本，不是你这边的问题。请过一会儿再试；若下载区域是中国大陆，也可改成「全球」后再试 / this download route cannot serve the package file for ${owner} ${tarballVersion} yet. Usually the route has not synced a just-published release; nothing on your side is wrong. Try again in a while; if Download region is China mainland, you can also switch it to Global and retry`,
+      }
+    }
     const zh = shown === undefined ? '' : `（${shown}）`
     const en = shown === undefined ? '' : ` (${shown})`
     return {

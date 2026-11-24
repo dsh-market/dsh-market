@@ -360,12 +360,36 @@ describe('every way the in-place update can fail says what happened and what to 
     expect(journalOf(dir).list()).toEqual([])
   })
 
-  it('the new version is not a plugin', async () => {
-    const { result } = await failWith(updated({ step: 'check', result: failed({ error: { code: 'not-bundle' } }) }))
-    expect(result.wroteNothing).toBe(true)
-    expect(result.stderr).toContain('不是一个 DSH 插件包')
-    expect(result.stderr).toContain('unchanged')
-    expect(result.refusalCode).toBe('not-bundle')
+  it('a check that finds no bundle hands the update to the ordinary path (pnpm\'s cache can hide `dsh`)', async () => {
+    // Measured on dsh 0.2.2-rc.5 + the Tencent mirror: the host's `pnpm view`
+    // answered from pnpm's install cache, which has no `dsh` field, for every
+    // plugin not republished since it was installed.
+    const service = host({ update: vi.fn(async () => updated({ step: 'check', result: failed({ error: { code: 'not-bundle' } }) })) })
+    service.installBundle.mockResolvedValueOnce(alreadyInstalled as never)
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    try {
+      await expect(runtime.runPlugin('desktop', ['add', 'example@2.0.0'])).resolves.toMatchObject({ exitCode: 0 })
+      expect(service.updateBundle).toHaveBeenCalledTimes(1)
+      expect(service.removeBundle).toHaveBeenCalledWith('example')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('the market itself: a check that finds no bundle falls back to the overlay, never to a removal', async () => {
+    const service = host({
+      rows: [row({ name: 'dshmarket' })],
+      update: vi.fn(async () => updated({ step: 'check', result: failed({ target: 'dshmarket', error: { code: 'not-bundle' } }) })),
+    })
+    service.installBundle.mockResolvedValueOnce(alreadyInstalled as never)
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    try {
+      await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
+      expect(service.updateBundle).toHaveBeenCalledTimes(1)
+      expect(service.removeBundle).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+    }
   })
 
   it('the running DSH rejects the version', async () => {

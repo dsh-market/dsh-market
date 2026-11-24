@@ -614,6 +614,20 @@ async function updateInPlace(
     // The host cannot express this update at all (not newer, not updatable):
     // nothing changed, and the ordinary path can still do it.
     if (managementCode(last.error) === 'invalid-spec') return null
+    // `not-bundle` at the check is the host reading `dsh` out of `pnpm view`,
+    // and pnpm 11 can answer that from its own install cache, which keeps only
+    // the fields an install needs: no `dsh`. Measured on dsh 0.2.2-rc.5 with
+    // the Tencent mirror (the China region's registry): any plugin that had
+    // not been republished since it was installed was refused this way, the
+    // market included, while the same `pnpm view` with an empty cache printed
+    // the bundle. Nothing changed yet, and the ordinary path installs and
+    // checks the real package, so it takes over; a version that truly is not
+    // a bundle is still refused there, by the install, and rolled back.
+    // (Libraries never get this far: the update list leaves them out, #793.)
+    if (managementCode(last.error) === 'not-bundle') {
+      logEvent('warn', 'update-in-place', `${plan.name}: the host's registry check found no bundle in ${plan.to}, which pnpm's metadata cache can cause; using the ordinary update path instead`)
+      return null
+    }
     return { ...asManaged(last), untouched: true }
   }
   if (outcome.step === 'remove') {

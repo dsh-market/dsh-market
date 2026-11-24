@@ -7776,8 +7776,9 @@ describe('the approve-and-retry banner is offered only for the failure it clears
     // And the real cause is what the row shows — now as the classifier's own
     // sentence, which names the package and says what such an entry usually
     // is (#848 took over this slot from the raw stderr tail, which happened to
-    // contain the 404 line among pnpm's progress chatter).
-    expect(String(failed.json.error)).toContain('registry 上不存在')
+    // contain the 404 line among pnpm's progress chatter). A 404 for a
+    // tarball reads as a download the route has not synced yet.
+    expect(String(failed.json.error)).toContain('还没同步')
     expect(String(failed.json.error)).toContain('@types/retry')
     expect(String(failed.json.stderr)).toContain('404')
   })
