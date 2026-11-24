@@ -9,9 +9,10 @@
  * or a bare `dsh` on PATH. Without either, specs skip.
  */
 
-import { execSync, spawn, spawnSync } from 'node:child_process'
+import { exec, execSync, spawn, spawnSync } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { ChildProcess } from 'node:child_process'
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,7 +21,7 @@ import type { Page } from 'playwright'
 import { startBrowseCatalogServer } from './browse-catalog.ts'
 import type { BrowseCatalogServer } from './browse-catalog.ts'
 import { packFixture, startFixtureRegistry } from './registry.ts'
-import type { FixtureRegistry } from './registry.ts'
+import type { FixtureRegistry, ServedPackage } from './registry.ts'
 
 // fileURLToPath, not .pathname: on Windows the pathname carries a leading
 // slash (`/D:/a/repo`), and resolving that yields a directory that does not
@@ -542,10 +543,72 @@ export interface ScaffoldOptions {
    * for a probe that deliberately needs today's live shapes.
    */
   localCatalog?: boolean
+  /**
+   * Install the market itself from the fixture registry instead of from the
+   * packed tarball, and publish it there at each of these versions (the
+   * first is installed and is the registry's `latest`; `publish('dshmarket',
+   * v)` moves the tag). The versions are the working tree's build with only
+   * `version` rewritten, so an update between them swaps real files without
+   * changing behavior. A tarball-installed market is a `file:` dependency,
+   * which the update route rightly refuses to update from a registry.
+   * Requires `fixtures`.
+   */
+  selfVersions?: string[]
+  /**
+   * Boot the way the official Electron app does: the market's own config names
+   * the profile `desktop`, which makes it take its official-desktop branch and
+   * drive the host's in-process plugin manager (`ctx.get('pluginManager')`)
+   * instead of spawning pnpm. The host refuses to boot a profile called
+   * `desktop` itself, so `profiles/desktop` is a symlink to the real `web`
+   * profile; the manager acts on the running profile either way.
+   */
+  officialDesktop?: boolean
+}
+
+/**
+ * The market's built working tree at another version: unpack the tarball
+ * `npm pack` produced, rewrite `version`, pack it again.
+ */
+function marketAtVersion(tarball: string, destination: string, version: string): ServedPackage {
+  const work = join(destination, `market@${version}`)
+  mkdirSync(work, { recursive: true })
+  execSync(`tar -xzf ${JSON.stringify(tarball)} -C ${JSON.stringify(work)}`, { stdio: 'pipe' })
+  const manifestPath = join(work, 'package', 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+  writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`)
+  const out = join(destination, `market-pack@${version}`)
+  mkdirSync(out, { recursive: true })
+  // --ignore-scripts: the unpacked copy has no sources to rebuild from.
+  execSync(`npm pack --ignore-scripts --pack-destination ${JSON.stringify(out)}`, { cwd: join(work, 'package'), stdio: 'pipe' })
+  const file = readdirSync(out).find(entry => entry.endsWith('.tgz'))
+  if (file === undefined) throw new Error(`npm pack produced no tarball for the market at ${version}`)
+  return { name: String(manifest.name), tarball: join(out, file), manifest: { ...manifest, version } }
+}
+
+/**
+ * `run` without blocking the event loop. Required for anything that talks to
+ * the fixture registry: it is served from THIS process, so a synchronous
+ * child would starve it and pnpm would wait for an answer that cannot come.
+ */
+async function runAsync(command: string, env: NodeJS.ProcessEnv, cwd: string = REPO_ROOT): Promise<void> {
+  try {
+    await promisify(exec)(command, { env, timeout: 300_000, cwd })
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr?.slice(-1500) ?? ''
+    const stdout = (error as { stdout?: string }).stdout?.slice(-1500) ?? ''
+    throw new Error(`${command} failed:\n${stderr}${stdout}`, { cause: error })
+  }
 }
 
 function run(command: string, env: NodeJS.ProcessEnv, cwd: string = REPO_ROOT): void {
-  execSync(command, { env, stdio: 'pipe', timeout: 300_000, cwd })
+  try {
+    execSync(command, { env, stdio: 'pipe', timeout: 300_000, cwd })
+  } catch (error) {
+    // execSync's own message is only "Command failed"; the reason is on stderr.
+    const stderr = (error as { stderr?: Buffer }).stderr?.toString().slice(-1500) ?? ''
+    const stdout = (error as { stdout?: Buffer }).stdout?.toString().slice(-1500) ?? ''
+    throw new Error(`${command} failed:\n${stderr}${stdout}`, { cause: error })
+  }
 }
 
 /**
@@ -591,16 +654,32 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
   // own install resolves from the real npm registry — it has dependencies.
   run('npm pack --pack-destination ' + JSON.stringify(home), env)
   const tarball = join(home, readdirSync(home).find(name => name.endsWith('.tgz'))!)
-  run(`${command} plugin --profile web add ${JSON.stringify(tarball)}`, env, DSH_CWD)
+  const selfPackages = (options.selfVersions ?? []).map(version => marketAtVersion(tarball, home, version))
+  if (selfPackages.length > 0 && (options.fixtures ?? []).length === 0) throw new Error('selfVersions needs `fixtures` for its registry')
+  if (selfPackages.length === 0) run(`${command} plugin --profile web add ${JSON.stringify(tarball)}`, env, DSH_CWD)
 
   // Only now redirect pnpm at the fixture registry, so the fixtures the
   // specs install go through real resolution without touching the network.
   let registry: FixtureRegistry | null = null
   let browseCatalog: BrowseCatalogServer | null = null
   if (options.fixtures !== undefined && options.fixtures.length > 0) {
-    registry = await startFixtureRegistry(options.fixtures.map(
-      entry => typeof entry === 'string' ? packFixture(entry, home) : packFixture(entry.dir, home, entry.version, entry.manifest),
-    ))
+    registry = await startFixtureRegistry([
+      ...options.fixtures.map(
+        entry => typeof entry === 'string' ? packFixture(entry, home) : packFixture(entry.dir, home, entry.version, entry.manifest),
+      ),
+      ...selfPackages,
+    ])
+    if (selfPackages.length > 0) {
+      registry.setLatest('dshmarket', String(selfPackages[0]!.manifest.version))
+      // The market comes from the registry, so its dependency is `^x.y.z`
+      // rather than a `file:` path. The profile's .npmrc has to exist first:
+      // the machine's own npm registry setting outranks the environment
+      // variable here, and would resolve the market from the public registry.
+      mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
+      writeFileSync(join(home, 'profiles', 'web', '.npmrc'), `registry=${registry.npmUrl}\nminimum-release-age=0\n`)
+      await runAsync(`${command} plugin --profile web add dshmarket@${String(selfPackages[0]!.manifest.version)}`,
+        { ...env, npm_config_registry: registry.npmUrl }, DSH_CWD)
+    }
     writeFileSync(
       join(home, 'profiles', 'web', '.npmrc'),
       // minimum-release-age=0: a fixture "published" seconds ago would
@@ -628,6 +707,20 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
     // Playwright wait. Install/update specs pass `fixtures` instead.
     browseCatalog = await startBrowseCatalogServer()
     env = { ...env, DSHM_REGISTRY_URL: browseCatalog.catalogUrl }
+  }
+
+  if (options.officialDesktop === true) {
+    // After the market is installed: its own `dsh plugin add` writes the
+    // patch file, and this entry only adds config to the market's row.
+    // Block style, not JSON: the market appends rows to this file when a
+    // plugin is switched off, and refuses to append to a top-level flow list.
+    writeFileSync(join(home, 'profiles', 'web', 'cordis.patch.yml'), [
+      '- id: dsh-market',
+      '  config:',
+      '    profile: desktop',
+      '',
+    ].join('\n'))
+    symlinkSync(join(home, 'profiles', 'web'), join(home, 'profiles', 'desktop'), 'dir')
   }
 
   const port = await freePort()

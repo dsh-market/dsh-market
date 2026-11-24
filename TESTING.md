@@ -53,6 +53,23 @@ hard failure — the job installs the CLI itself, so a silent skip there would
 report "e2e passed" for a run that asserted nothing. Browser download can use a mirror:
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright npx playwright install chromium`.
 
+### Driving the official-desktop branch on a plain host
+
+`dsh web` never takes the Electron app's branch by itself: that branch is for a
+profile called `desktop`, which the host refuses to boot. `launchMarketScaffold
+({ officialDesktop: true })` gets the same code path anyway — the market's own
+config names the profile `desktop` and `profiles/desktop` is a symlink to the
+real one — so installs, updates and removals go through `ctx.get('pluginManager')`
+instead of a pnpm the market spawns. `selfVersions: [a, b]` installs the market
+itself from the fixture registry at `a` and publishes `b`, which is how a spec
+updates the market from inside itself.
+
+`tests/web/desktop-update.e2e.ts` uses both, and asserts different things by
+host: on dsh 0.2.2+ (has `updateBundle`) an update is one manager call and the
+fixture's liveness marker names the NEW version without a restart; on 0.2.1 the
+same user-visible result comes from the remove-then-install pair. Run it
+against each line you support (`DSHM_E2E_DSH=<dsh bin>`).
+
 ## The one check no lane can run: provisioning pnpm
 
 Every automated lane has pnpm already — CI installs it, developer machines
