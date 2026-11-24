@@ -11,6 +11,7 @@ import {
   type HostPackageManager,
   type InstallResult,
 } from './dsh-cli.ts'
+import { logEvent } from './log.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { compareSemver, isSemver } from './check.ts'
 import {
@@ -43,6 +44,17 @@ interface ManagedResult {
   untouched?: boolean
   /** One more plain sentence for the user, appended to the failure's account. */
   note?: string
+  /**
+   * The host replaced the running market itself during this call: the
+   * instance that asked is already disposed (see `updateInPlace`).
+   */
+  selfSwapped?: boolean
+  /**
+   * The host loaded the new build into the running process itself (HMR):
+   * `applied`, not `restart-required`. The old module is gone from memory, so
+   * the update route must not say "restart to apply".
+   */
+  liveSwap?: boolean
 }
 
 /**
@@ -189,13 +201,7 @@ function detail(error: unknown): string {
   const code = managementCode(error)
   const copy = code === undefined ? undefined : REFUSAL_COPY[code]
   // The code stays on the line: it is what the log and the issue report carry.
-  if (copy !== undefined) {
-    // `operation-error` carries the host's own reason; without it the line
-    // says "could not finish" and nothing else.
-    const reason = code === 'operation-error' ? (error as { diagnostic?: unknown }).diagnostic : undefined
-    const tail = typeof reason === 'string' && reason.trim() !== '' ? `\n${reason.trim().slice(0, 600)}` : ''
-    return `${copy.zh} / ${copy.en} (${code})${tail}`
-  }
+  if (copy !== undefined) return `${copy.zh} / ${copy.en} (${code})`
   const message = (error as { message?: unknown }).message
   if (typeof message === 'string' && message !== '') return message
   const diagnostic = hostDiagnostic(error)
@@ -206,6 +212,13 @@ function detail(error: unknown): string {
       return `${diagnostic}\n\n宿主在开始安装前自己检查了 GitHub 的连通性，5 秒内没连上就放弃了这次安装，pnpm 还没有开始，profile 没有任何改动。如果手动 \`git ls-remote\` 能连上（例如已给 git 配好代理或换过 TLS 后端），把宿主 plugin-manager 的 \`githubConnectionTimeoutMs\` 调大再试（cordis.yml 里该插件的 config）。 / the host checks GitHub reachability before installing and gave up after five seconds; pnpm never started and the profile is unchanged. If git itself can reach GitHub (a proxy, or a different TLS backend), raise the host plugin-manager's \`githubConnectionTimeoutMs\` (its config in cordis.yml) and try again.`
     }
     return diagnostic
+  }
+  // The host's own reason for a refused check (the registry did not answer,
+  // the version is not there). Said with what it means for the user: nothing
+  // changed, and what to do.
+  const reason = code === 'operation-error' ? (error as { diagnostic?: unknown }).diagnostic : undefined
+  if (typeof reason === 'string' && reason.trim() !== '') {
+    return `桌面端没能完成这次操作，现在的版本不受影响。原因见下，通常检查网络后重试即可。 / The desktop app could not finish this operation and your current version is unchanged. The reason is below; checking the network and retrying usually fixes it.\n${reason.trim().slice(0, 600)}`
   }
   return JSON.stringify(error)
 }
@@ -265,10 +278,6 @@ const REFUSAL_COPY: Record<string, { zh: string; en: string }> = {
   'invalid-spec': {
     zh: '桌面端不接受这次更新的目标，没有改动任何东西。请刷新市场后再试',
     en: 'the desktop app did not accept the target of this update and changed nothing. Refresh the market and try again',
-  },
-  'operation-error': {
-    zh: '桌面端没能完成这次操作，现在的版本不受影响。看下面的原因，通常检查网络后重试即可',
-    en: 'the desktop app could not finish this operation and your current version is unchanged. The reason is below; checking the network and retrying usually fixes it',
   },
   'update-incomplete': {
     zh: '桌面端没有在限定时间内完成这次更新：插件可能已经被移除，新版本却还没装上。重新打开 DSH 后市场会自动补装；也可以现在从「设置 → 插件」重试',
@@ -443,46 +452,61 @@ interface InPlaceUpdate {
  * - a dist-tag or range instead of an exact version;
  * - a package the host does not list as updatable (`update` absent): a link,
  *   a floating Git spec, an `npm:` alias, an installation-owned package;
- * - the market itself — see `SELF_NAMES`: with HMR the host removes the
- *   bundle first, which unloads this very code (#900), so its self-update
- *   keeps its own overlay.
+ *
+ * The market itself is NOT on that list any more. It used to be (#900: with
+ * HMR the host removes the bundle first, which unloads the code that was going
+ * to install the new one), because the pair was driven from here, step by
+ * step. `updateBundle` runs the pair inside the host, which does not care that
+ * the caller is gone; what is left to handle is the request that asked, see
+ * `updateInPlace`. A host without `updateBundle` never reaches this code and
+ * keeps the market's own overlay (`updateMarketInPlace`).
  */
 async function planInPlaceUpdate(
   manager: OfficialPluginManagerLike,
   spec: string,
   context?: UpdateContext,
 ): Promise<InPlaceUpdate | null> {
+  // Why a spec went the old way, in the log: "did it use updateBundle" is the
+  // first thing a bug report about an update has to answer.
+  const decline = (reason: string): null => {
+    logEvent('info', 'update-in-place', `${spec}: not updated in place (${reason}); using remove and install`)
+    return null
+  }
   if (typeof manager.updateBundle !== 'function' || typeof manager.listBundles !== 'function') return null
   let rows: ManagedBundleRow[]
   try {
     rows = await manager.listBundles()
   } catch {
     // Reading the profile failed: the ordinary path reports that in its own words.
-    return null
+    return decline('the host could not list its bundles')
   }
-  if (!Array.isArray(rows)) return null
+  if (!Array.isArray(rows)) return decline('the host listed no bundles')
   const named = registryNameOf(spec)
   let row: ManagedBundleRow | undefined
   let to = ''
   let gitSpec: string | undefined
   if (named !== undefined) {
-    row = rows.find(entry => entry.name === named && entry.update === 'registry')
+    row = rows.find(entry => entry.name === named)
+    if (row?.update !== 'registry') return decline(row === undefined ? 'not an installed bundle' : 'the host does not list it as updatable from a registry')
     to = targetVersionOf(spec)
+    if (to === '') return decline('the target is not an exact version')
   } else {
     const origin = pinnedGitOrigin(spec)
-    if (origin === null) return null
+    if (origin === null) return decline('not a Git spec pinned to one commit')
     row = rows.find(entry => entry.update === 'git' && typeof entry.source === 'string' && pinnedGitOrigin(entry.source) === origin)
-    if (row === undefined || context?.gitVersionAt === undefined) return null
+    if (row === undefined) return decline('no installed Git bundle comes from that repository commit pin')
+    if (context?.gitVersionAt === undefined) return decline('the commit version cannot be read here')
     try {
       to = (await context.gitVersionAt(spec)) ?? ''
     } catch {
-      return null
+      to = ''
     }
+    if (to === '') return decline('the commit version could not be read')
     gitSpec = spec
   }
-  if (row === undefined || SELF_NAMES.has(row.name) || to === '') return null
   const from = row.version
-  if (typeof from !== 'string' || !isSemver(from) || !isSemver(to) || compareSemver(to, from) <= 0) return null
+  if (typeof from !== 'string' || !isSemver(from) || !isSemver(to)) return decline('a version is not a semver')
+  if (compareSemver(to, from) <= 0) return decline(`${to} is not newer than ${from}`)
   return { name: row.name, from, to, ...(gitSpec === undefined ? {} : { gitSpec }) }
 }
 
@@ -527,6 +551,8 @@ async function updateInPlace(
     spec,
   })
   const settle = (): void => { if (record !== undefined) context?.journal.finish(record.id) }
+  // The line a bug report needs to tell which path an update took.
+  logEvent('info', 'update-in-place', `${plan.name} ${plan.from} -> ${plan.to}: asking the host to update it in place`)
   progress.lastLine = UPDATE_STEP_LINES.checking!
   const unwatch = options.requestId === undefined
     ? undefined
@@ -553,18 +579,35 @@ async function updateInPlace(
     if (context !== undefined && readInstalledVersion(context.profile, plan.name, context.profileDirectory) === plan.from) settle()
     throw error
   } finally {
-    unwatch?.()
+    // The listener hangs off the context that asked, which a self-update has
+    // already disposed by now; letting go of it must never decide the answer.
+    try { unwatch?.() } catch { /* nothing left to release */ }
   }
   const last = outcome.result
+  logEvent('info', 'update-in-place', `${plan.name}: the host answered at step ${outcome.step}: ${last.application}${managementCode(last.error) === undefined ? '' : ` (${managementCode(last.error)!})`}${outcome.restore === undefined ? '' : `; restore ${outcome.restore.application}`}`)
   const asManaged = (result: typeof last): ManagedResult => ({
     application: result.application,
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(result.packageResult === undefined ? {} : { packageResult: result.packageResult }),
   })
+  // The market updating ITSELF. With HMR the host removes the running bundle
+  // before it installs the new one, so by the time this call answers, this
+  // very instance has been disposed and its replacement is serving (measured
+  // on dsh 0.2.2-rc.5 and 0.2.3-alpha.2, tests/web/desktop-update.e2e.ts).
+  // What survives is this closure: it can still answer the HTTP request —
+  // the response belongs to the web server, not to the plugin — but anything
+  // that asks the disposed context for a service (`loader`, to read what is
+  // live) throws, which turned a finished update into a 500. The caller is
+  // told, and answers from the result alone. Without HMR the host installs
+  // over the running version instead (`restart-required`), nothing is
+  // disposed, and the ordinary reply applies.
+  const tornDown = SELF_NAMES.has(plan.name) && outcome.step === 'install'
+    && (kept(last) ? last.application !== 'restart-required' : outcome.restore !== undefined)
+  const swapped = <T extends ManagedResult>(result: T): T => tornDown ? { ...result, selfSwapped: true } : result
   if (outcome.step === 'install' && kept(last)) {
     settle()
     if (last.application === 'restart-required') markRestartPending()
-    return asManaged(last)
+    return swapped({ ...asManaged(last), ...(last.application === 'applied' ? { liveSwap: true } : {}) })
   }
   if (outcome.step === 'check') {
     settle()
@@ -586,11 +629,11 @@ async function updateInPlace(
   if (outcome.restore !== undefined) {
     if (kept(outcome.restore)) {
       settle()
-      return {
+      return swapped({
         ...asManaged(last),
         untouched: true,
         note: '旧版本已经装回，没有丢东西。 / The old version was put back; nothing was lost.',
-      }
+      })
     }
     // Neither version is installed. Do not ask the same host to restore it
     // again from the route (it just failed to) and keep the record, re-aimed
@@ -599,11 +642,11 @@ async function updateInPlace(
     if (record !== undefined && context !== undefined) {
       context.journal.begin({ profile: context.profile, name: plan.name, from: plan.from, to: plan.from, spec: `${plan.name}@${plan.from}` })
     }
-    return {
+    return swapped({
       ...asManaged(last),
       repairOnRestart: true,
       note: `旧版本也没能装回，这个插件现在是缺的。重新打开 DSH 后市场会自动装回 ${plan.from}；也可以现在从「设置 → 插件」重新安装它。 / The old version could not be put back either, so the plugin is missing right now. Reopen DSH and the market will reinstall ${plan.from}, or reinstall it from Settings → Plugins now.`,
-    }
+    })
   }
   // No restore ran: a host without HMR installs over the running version and
   // the failure left the old files in place. That is the ordinary failed
@@ -720,7 +763,8 @@ async function installOrReinstall(
   const install = (): Promise<ManagedResult> => trackManagerWrite(manager.installBundle(spec, options))
   // dsh 0.2.2+ replaces an installed bundle in one call. Everything it cannot
   // express falls through to the remove-and-install path below, unchanged.
-  const plan = await planInPlaceUpdate(manager, spec, context)
+  // (Not awaited on a manager without it: the install call stays synchronous.)
+  const plan = typeof manager.updateBundle === 'function' ? await planInPlaceUpdate(manager, spec, context) : null
   if (plan !== null) {
     const updated = await updateInPlace(manager, plan, options, context)
     if (updated !== null) return updated
@@ -1053,6 +1097,8 @@ export function createOfficialDesktopRuntime(
         // tell a self-update refusal from an ordinary failure.
         ...(ok ? {} : { refusalCode: managementCode(result.error) }),
         ...(result.needsRestart === true ? { needsRestart: true } : {}),
+        ...(result.selfSwapped === true ? { selfSwapped: true } : {}),
+        ...(ok && result.liveSwap === true ? { liveSwap: true } : {}),
       }
     }, (error): InstallResult => {
       const message = detail(error)
