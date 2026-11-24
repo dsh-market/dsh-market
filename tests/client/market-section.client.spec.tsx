@@ -461,102 +461,45 @@ describe('the market names its own new version on Installed', () => {
   })
 })
 
-describe('Market self-update waiting hint (#1244)', () => {
+describe('the market\'s own new version beside its version number', () => {
   const current = '1.73.19'
   const until = new Date(2026, 10, 17, 4, 45).toISOString()
   const endpoints = {
     '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', version: current },
     '/dsh-market/installed': { profile: 'desktop', installed: { dshmarket: current }, live: ['dshmarket'] },
   }
-  // The visible words now carry the version and time (a bare label left people asking how to get it).
-  const hint = /^\(New version/
+  const offer = /^New version/
 
   beforeEach(() => { vi.setSystemTime(new Date(2026, 10, 17, 0, 54)) })
   afterEach(() => { vi.useRealTimers() })
 
-  it('shows when the held version becomes available and then hands off to the existing action', async () => {
-    let updateAvailable = false
+  it('says nothing about a version that cannot be installed yet: there is nothing to do', async () => {
     stubFetch({
       ...endpoints,
-      '/dsh-market/updates': () => ({ updates: { dshmarket: {
-        kind: 'npm', current, latest: '1.73.20', updateAvailable,
-        ...(updateAvailable ? { eligibleVersion: '1.73.20' } : { heldUpdate: { latest: '1.73.20', until } }),
-      } } }),
+      '/dsh-market/updates': { updates: { dshmarket: {
+        kind: 'npm', current, latest: '1.73.20', updateAvailable: false, heldUpdate: { latest: '1.73.20', until },
+      } } },
     })
     render(<MarketSection {...props()} />)
-    const marker = await screen.findByText(hint)
-    expect(marker.tabIndex).toBe(0)
-    expect(screen.queryByRole('button', { name: en.marketUpdate })).toBeNull()
-    expect(screen.queryByRole('tooltip')).toBeNull()
-
-    fireEvent.mouseEnter(marker)
-    expect((await screen.findByRole('tooltip')).textContent).toBe('v1.73.20 available at 04:45')
-    fireEvent.mouseLeave(marker)
-    expect(screen.queryByRole('tooltip')).toBeNull()
-
-    updateAvailable = true
-    fireEvent.click(screen.getByRole('button', { name: re(en.tabInstalled) }))
-    expect(await screen.findByRole('button', { name: en.marketUpdate })).toBeTruthy()
-    expect(screen.queryByText(hint)).toBeNull()
+    await screen.findByText(`v${current}`)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
+    expect(screen.queryByRole('button', { name: offer })).toBeNull()
   })
 
-  it('distinguishes the held release from the existing button’s install target', async () => {
+  it('offers the installable version as one click that starts the update on Installed', async () => {
     stubFetch({
       ...endpoints,
       '/dsh-market/updates': { updates: { dshmarket: {
         kind: 'npm', current, latest: '1.73.21', eligibleVersion: '1.73.20', updateAvailable: true,
         heldUpdate: { latest: '1.73.21', until },
       } } },
-      '/dsh-market/update': { ok: true },
     })
     render(<MarketSection {...props()} />)
-    await openInstalled()
-    const button = await screen.findByRole('button', { name: en.marketUpdate })
-    const marker = screen.getByText(hint)
-    fireEvent.focus(marker)
-    const tooltip = screen.getByRole('tooltip')
-    expect(tooltip.textContent).toContain('v1.73.20 available now')
-    expect(tooltip.textContent).toContain('v1.73.21 available at 04:45')
-    fireEvent.blur(marker)
-    expect(screen.queryByRole('tooltip')).toBeNull()
-
+    const button = await screen.findByRole('button', { name: offer })
+    expect(button.textContent).toContain('v1.73.20')
+    expect(button.textContent).not.toContain('1.73.21')
     fireEvent.click(button)
-    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
-      .toEqual([{ name: 'dshmarket', eligibleVersion: '1.73.20' }]))
-  })
-
-  it('identifies a held release without promising an estimated availability time', async () => {
-    stubFetch({
-      ...endpoints,
-      '/dsh-market/updates': { updates: { dshmarket: {
-        kind: 'npm', current, latest: '1.73.20', updateAvailable: false,
-        heldUpdate: { latest: '1.73.20', until, estimated: true },
-      } } },
-    })
-    render(<MarketSection {...props()} />)
-    fireEvent.focus(await screen.findByText(hint))
-    expect(screen.getByRole('tooltip').textContent).toBe('v1.73.20')
-  })
-
-  it('formats a next-day waiting time in the UI language (#1254)', async () => {
-    const DateTimeFormat = Intl.DateTimeFormat
-    const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locales, options) {
-      return new DateTimeFormat(locales ?? 'zh-CN', options)
-    })
-    try {
-      stubFetch({
-        ...endpoints,
-        '/dsh-market/updates': { updates: { dshmarket: {
-          kind: 'npm', current, latest: '1.73.20', updateAvailable: false,
-          heldUpdate: { latest: '1.73.20', until: new Date(2026, 10, 18, 4, 45).toISOString() },
-        } } },
-      })
-      render(<MarketSection {...props()} />)
-      fireEvent.focus(await screen.findByText(hint))
-      expect(screen.getByRole('tooltip').textContent).toBe('v1.73.20 available at Nov 18, 04:45')
-    } finally {
-      formatter.mockRestore()
-    }
+    await waitFor(() => expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(true))
   })
 })
 
@@ -14184,19 +14127,3 @@ describe('what an organization turned off or fixed', () => {
   })
 })
 
-describe('the new-version words beside the market version say what they mean', () => {
-  const t = (key: string): string => ({
-    marketVersionWaitingText: '(New version: {0})',
-    marketVersionWaitingUnknown: '(New version {0}, not available to update yet. Check back in a few days)',
-    marketVersionAvailableAt: '{0} available at {1}',
-    marketVersionAvailableNow: '{0} available now',
-  } as Record<string, string>)[key] ?? key
-
-  it('names the time when it is known, and says it cannot be updated yet when it is not', async () => {
-    const { marketWaitLabel } = await import('../../src/client/market-helpers.ts')
-    const later = new Date(Date.now() + 3 * 3_600_000).toISOString()
-    expect(marketWaitLabel({ latest: '1.2.0', until: later }, null, 'en', t as never)).toMatch(/^\(New version: v?1\.2\.0 available at /)
-    expect(marketWaitLabel({ latest: '1.2.0', until: later, estimated: true }, null, 'en', t as never)).toContain('not available to update yet')
-    expect(marketWaitLabel({ latest: '1.2.0', until: '2000-01-01T00:00:00Z' }, null, 'en', t as never)).toContain('not available to update yet')
-  })
-})

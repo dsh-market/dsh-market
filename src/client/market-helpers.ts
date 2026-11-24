@@ -129,23 +129,6 @@ export function marketWaitTip(
   return `${ready} · ${pending}`
 }
 
-/**
- * The visible words next to the version: what is new and what it means for
- * the user. A bare "(new version)" left people asking how to get it. With a
- * known time it names the time; without one it says it cannot be updated yet.
- */
-export function marketWaitLabel(
-  held: NonNullable<UpdateStatus['heldUpdate']>,
-  eligible: string | null,
-  locale: string,
-  t: Translate,
-): string {
-  const until = new Date(typeof held.until === 'string' ? held.until : NaN)
-  const timed = held.estimated !== true && until.getTime() > Date.now()
-  if (eligible !== null || timed) return t('marketVersionWaitingText').replace('{0}', marketWaitTip(held, eligible, locale, t))
-  return t('marketVersionWaitingUnknown').replace('{0}', displayLatest(held.latest))
-}
-
 /** Compact held-wait for the trailing row (clock + short label); version/reason in title. */
 export function heldUpdateBeside(
   held: { latest: string; until: string; estimated?: true },

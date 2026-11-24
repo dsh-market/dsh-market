@@ -27,7 +27,7 @@ import {
   setUpdateNotificationsIntervalHours,
 } from './update-notifications.ts'
 import { MarketLogo } from './MarketLogo.tsx'
-import { marketWaitLabel, marketWaitTip, writeSidebarTipDismissed } from './market-helpers.ts'
+import { writeSidebarTipDismissed } from './market-helpers.ts'
 import { HOVER_TIP_DELAY_MS, SponsorMark } from './MarketCardParts.tsx'
 import { activationMeta, HostDependencyDiagnostics } from './MarketStatusParts.tsx'
 import type { MarketStateCtx } from './market-state.tsx'
@@ -144,10 +144,17 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
           {version !== null && (
             <span className={css.marketVersionGroup}>
               <span className={css.version} title={t('versionHint')}>v{version}</span>
-              {showMarketWait && (
-                <Tooltip label={() => marketWaitTip(heldMarketVersion!, eligibleMarketVersion, uiLocale, t)} side="bottom" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={320}>
-                  <span className={css.marketVersionWait} tabIndex={0}>{marketWaitLabel(heldMarketVersion!, eligibleMarketVersion, uiLocale, t)}</span>
-                </Tooltip>
+              {/* Only when there is something to do: a version that cannot be
+                  installed yet is not shown at all (nothing to act on). */}
+              {marketOffer !== null && (
+                <button
+                  type="button"
+                  className={css.marketVersionUpdate}
+                  disabled={updatingName !== null || busyUrl !== null}
+                  onClick={takeMarketOffer}
+                >{updatingName === marketOffer.name
+                  ? t('updating')
+                  : t('marketVersionUpdateNow').replace('{0}', marketOffer.version === null ? '' : ` v${marketOffer.version.replace(/^v/, '')}`)}</button>
               )}
             </span>
           )}
