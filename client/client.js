@@ -9545,6 +9545,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			48,
 			96
 		];
+		/** Where the chosen page size is kept, so it survives closing the market. */
+		const PAGE_SIZE_KEY = "dshm-page-size";
 		const WEBDAV_STORAGE_KEY = "dshm-webdav";
 		/** Sort field choices in the filter panel. */
 		const SORT_FIELD_OPTIONS = [
@@ -12729,6 +12731,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			return [count, setCount];
 		}
+		/** The page size the reader chose last time; anything unexpected is the default. */
+		function storedPageSize() {
+			try {
+				const saved = Number(localStorage.getItem(PAGE_SIZE_KEY));
+				return PAGE_SIZES.includes(saved) ? saved : 24;
+			} catch {
+				return 24;
+			}
+		}
 		/**
 		* Page/page-size state shared by every paged list in this file (Discover,
 		* Themes) — each caller owns its OWN instance (their filters are
@@ -12739,7 +12750,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		function usePagination(count, resetDeps, scrollToTop) {
 			const [page, setPage] = useResettableCount(1, resetDeps);
-			const [pageSize, setPageSize] = (0, react.useState)(24);
+			const [pageSize, setPageSize] = (0, react.useState)(storedPageSize);
 			const totalPages = Math.max(1, Math.ceil(count / pageSize));
 			const currentPage = Math.min(page, totalPages);
 			const goToPage = (next) => {
@@ -12748,6 +12759,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			};
 			const changePageSize = (size) => {
 				setPageSize(size);
+				try {
+					localStorage.setItem(PAGE_SIZE_KEY, String(size));
+				} catch {}
 				setPage(1);
 				scrollToTop();
 			};
@@ -18519,7 +18533,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		//#endregion
 		//#region src/client/client-version.ts
-		const CLIENT_VERSION = "1.83.2";
+		const CLIENT_VERSION = "1.83.3";
 		/** Numeric x.y.z comparison; prerelease tags are ignored. null if either is not a version. */
 		function compareMarketVersions(a, b) {
 			const parse = (v) => {
@@ -19296,7 +19310,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 									className: Market_module_css_default.grow,
 									children: [
-										t("staleBanner").replace("{0}", "1.83.2").replace("{1}", version ?? ""),
+										t("staleBanner").replace("{0}", "1.83.3").replace("{1}", version ?? ""),
 										" ",
 										hostCaps.selfReload || restartEnabled && restartReachable && debuggerLatch === null ? null : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint"),
 										reloadingSelf === "failed" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", reloadError !== "" ? reloadError : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint")] })
