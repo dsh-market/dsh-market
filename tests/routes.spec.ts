@@ -450,6 +450,34 @@ describe('body validation — 400 contracts', () => {
     } finally { npm.mockRestore(); now.mockRestore() }
   })
 
+  it('keeps catalog pages in order and on the generation that supplied their first page', async () => {
+    const path = '/dsh-market/registry'
+    const plugins = Array.from({ length: 513 }, (_, i) => ({
+      npm: `plugin-${i}`, name: `Plugin ${i}`, owner: 'acme', url: `https://github.com/acme/plugin-${i}`,
+      category: 'workflow', description: {}, install: '', added: '2026-11-13',
+    }))
+    const original = { updated: 'first', count: plugins.length, categories: {}, plugins }
+    const registry = vi.spyOn(registryApi, 'loadRegistry').mockResolvedValue(original)
+    const read = (query = '') => hit(routes, path, { method: 'GET', url: path + query, host: HOST })
+    try {
+      expect(jsonBody(await read()).registry).toEqual(original)
+      const first = jsonBody(await read('?page=0'))
+      expect(first).toMatchObject({ page: 0, pages: 3, snapshot: expect.any(String) })
+      const next = { ...original, updated: 'next', plugins: [...plugins].reverse() }
+      registry.mockResolvedValue(next)
+      const newer = jsonBody(await read('?page=0'))
+      expect(newer.snapshot).not.toBe(first.snapshot)
+      expect(newer.registry).toMatchObject({ updated: 'next' })
+      const second = jsonBody(await read(`?page=1&snapshot=${first.snapshot}`))
+      const last = jsonBody(await read(`?page=2&snapshot=${first.snapshot}`))
+      expect(first.registry).toMatchObject({ updated: 'first', plugins: plugins.slice(0, 256) })
+      expect(second.registry).toMatchObject({ updated: 'first', plugins: plugins.slice(256, 512) })
+      expect(last.registry).toMatchObject({ updated: 'first', plugins: plugins.slice(512) })
+      expect((await read('?page=1&snapshot=unknown')).status).toBe(409)
+      expect((await read(`?page=3&snapshot=${first.snapshot}`)).status).toBe(400)
+    } finally { registry.mockRestore() }
+  })
+
   it('identifies the GitHub release displayed by the catalog and rejects a changed revision per item', async () => {
     const url = 'https://github.com/acme/plugin-a'
     const tarball = `${url}/releases/download/v1.0.0/plugin.tgz`
@@ -1895,6 +1923,8 @@ describe('what the organization turned off, as the routes report it', () => {
     policy({ comments: false, externalImages: false })
     const restricted = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry' })
     expect(jsonBody(restricted).policy).toEqual({ externalImages: false, comments: false })
+    const paged = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry?page=0' })
+    expect(jsonBody(paged)).toMatchObject({ page: 0, pages: 1, policy: { externalImages: false, comments: false } })
   })
 
   it('never tells the page where a bundle\'s package file sits on this machine', async () => {

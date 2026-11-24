@@ -323,7 +323,7 @@ function CatalogStatus({ c }: { c: CatalogStatusCtx & Partial<Pick<MarketStateCt
 
 type DiscoverTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
   & Pick<MarketStateCtx,
-    'bodyRef' | 'cat' | 'catsStuck' | 'catsWrapRef' | 'compatibleWithHost' | 'data' |
+    'bodyRef' | 'cat' | 'catalogPreview' | 'catsStuck' | 'catsWrapRef' | 'compatibleWithHost' | 'data' |
     'discoverSearchReset' | 'hostVersion' | 'lang' | 'q' | 'resetDiscoverSearch' |
     'setCat' | 'source' | 'setSource' | 'setCatsOpen' | 'setCatsSentinel' | 'setCompatibleWithHost' | 'setQ' | 'setSortDir' |
     'setSortField' | 'setStuckExpanded' | 'setTimeRange' | 'sortDir' | 'sortField' | 'surface' |
@@ -338,8 +338,8 @@ type DiscoverTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
 
 export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
   const {
-    basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize,
-    compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent,
+    basePage, bodyRef, cat, catalogPreview, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize,
+    compatibleWithHost, currentPage, data: catalog, discoverMore, discoverSearchReset, goToPage, hasRecent,
     hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError,
     loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll,
     pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile,
@@ -347,24 +347,33 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
     setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField,
     surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats,
   } = c
+  const data = catalog ?? catalogPreview
   const recentRowRef = useRef<HTMLDivElement | null>(null)
   const failedSources = useFailedSources()
   const aiSearch = useAiSearch(t)
   // AI picks resolved to the catalog's own entries (by repository URL: names
   // are not unique), in the model's order, drawn exactly like ordinary results.
   const aiPlugins = useMemo(() => {
-    if (aiSearch.picks === null || data === null) return null
-    const byUrl = new Map(data.plugins.map(plugin => [plugin.url, plugin]))
+    if (aiSearch.picks === null || catalog === null) return null
+    const byUrl = new Map(catalog.plugins.map(plugin => [plugin.url, plugin]))
     return aiSearch.picks.flatMap(pick => {
       const plugin = byUrl.get(pick.url)
       return plugin === undefined ? [] : [plugin]
     })
-  }, [aiSearch.picks, data])
+  }, [aiSearch.picks, catalog])
   return (
-    loadError !== null || data === null
+    data === null || (loadError !== null && catalogPreview === null)
       ? <CatalogStatus c={c} />
       : (
             <>
+              {catalogPreview !== null && (
+                <div className={css.updateCheckNotice}>
+                  <span role="status">{t(loadError !== null ? 'catalogInterrupted' : 'catalogProgress')}</span>
+                  {loadError !== null && (
+                    <Button variant="ghost" size="sm" onClick={() => { void loadCatalog() }}>{t('loadRetry')}</Button>
+                  )}
+                </div>
+              )}
               <div ref={setCatsSentinel} />
               <div className={css.stickyHead}>
               <div className={css.tabSearchRow}>

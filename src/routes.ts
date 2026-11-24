@@ -8,7 +8,7 @@
  * same-origin POSTs and only sources present in the curated registry.
  */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -112,6 +112,8 @@ const DISCOVERY_RETRY_MS = 30_000
 type DiscoveryVerdict = HostCompatibility & { retryAfterMs?: number; catalogChanged?: true }
 type DiscoveryPlugin = RegistryPlugin & { compatibilityRevision?: string }
 type DiscoveryCatalog = Omit<Registry, 'plugins'> & { plugins: DiscoveryPlugin[] }
+const CATALOG_PAGE_SIZE = 256
+const CATALOG_SNAPSHOT_TTL_MS = 10 * 60_000
 
 /** These revisions describe the server's catalog, independently of what its source includes. */
 const discoveryCatalogs = new WeakMap<Registry, {
@@ -621,6 +623,7 @@ export function mountMarketRoutes(
   hostActivation?: HostPluginActivation,
 ): () => Promise<void> {
   let disposed = false
+  const catalogSnapshots = new Map<string, { registry: DiscoveryCatalog; expiresAt: number }>()
   // An ordinary profile must resolve under DSH_HOME by the same rules as the
   // DSH CLI. A host-authoritative explicit directory (DSH Desktop) does not
   // derive a path from this display/profile name.
@@ -4370,12 +4373,52 @@ export function mountMarketRoutes(
         }
         try {
           try {
-            const registry = await loadRegistry()
-            sendJson(response, 200, {
-              registry: discoveryCatalog(registry).response,
-              ...(Object.keys(clientPolicy()).length > 0 ? { policy: clientPolicy() } : {}),
-              hostVersion: dshHostInfo()?.version ?? null,
-            })
+            const query = new URL(request.url ?? '/', 'http://localhost').searchParams
+            const pageText = query.get('page')
+            const sendCatalog = (registry: DiscoveryCatalog, paging?: { snapshot: string; page: number; pages: number }) => {
+              const policy = clientPolicy()
+              sendJson(response, 200, {
+                registry, hostVersion: dshHostInfo()?.version ?? null,
+                ...(Object.keys(policy).length > 0 ? { policy } : {}),
+                ...paging,
+              })
+            }
+            if (pageText === null && request.headers['x-dsh-catalog-paging'] !== '1') {
+              sendCatalog(discoveryCatalog(await loadRegistry()).response)
+              return
+            }
+            if (pageText !== null && !/^\d{1,6}$/.test(pageText)) {
+              sendJson(response, 400, { error: 'Invalid catalog page' })
+              return
+            }
+            const page = Number(pageText ?? 0)
+            const now = Date.now()
+            let snapshot = query.get('snapshot')
+            let registry: DiscoveryCatalog
+            if (page === 0 && snapshot === null) {
+              registry = discoveryCatalog(await loadRegistry()).response
+              snapshot = [...catalogSnapshots].find(([, saved]) => saved.registry === registry)?.[0] ?? randomUUID()
+            } else {
+              const saved = catalogSnapshots.get(snapshot ?? '')
+              if (snapshot === null || saved === undefined || saved.expiresAt <= now) {
+                sendJson(response, 409, { error: 'The catalog changed while loading. Please retry.' })
+                return
+              }
+              registry = saved.registry
+            }
+            const pages = Math.max(1, Math.ceil(registry.plugins.length / CATALOG_PAGE_SIZE))
+            if (page >= pages) {
+              sendJson(response, 400, { error: 'Invalid catalog page' })
+              return
+            }
+            if (pages > 1) {
+              // Keep two generations for overlapping opens; active reads renew their idle limit.
+              catalogSnapshots.delete(snapshot)
+              catalogSnapshots.set(snapshot, { registry, expiresAt: Date.now() + CATALOG_SNAPSHOT_TTL_MS })
+              if (catalogSnapshots.size > 2) catalogSnapshots.delete(catalogSnapshots.keys().next().value!)
+            }
+            const start = page * CATALOG_PAGE_SIZE
+            sendCatalog({ ...registry, plugins: registry.plugins.slice(start, start + CATALOG_PAGE_SIZE) }, { snapshot, page, pages })
           } catch (error) {
             // Say what went wrong. The market used to substitute a bundled
             // copy here, so an unreachable registry looked exactly like a
