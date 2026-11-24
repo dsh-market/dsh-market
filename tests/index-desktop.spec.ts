@@ -63,9 +63,11 @@ class FakeContext {
     return this.services[name]
   }
 
-  inject(deps: string[], callback: (ctx: FakeContext) => void): void {
+  inject(deps: string[], callback: (ctx: FakeContext) => void): { dispose: () => void } {
     this.injectCalls.push(deps)
-    if (deps.every(name => this.services[name] !== undefined)) callback(this)
+    let dispose: (() => void) | undefined
+    if (deps.every(name => this.services[name] !== undefined)) dispose = callback(this)
+    return { dispose: () => { dispose?.() } }
   }
 
   effect(callback: () => (() => void | Promise<void>), label: string): void {
@@ -367,8 +369,17 @@ describe('host adaptation', () => {
     })
     apply(ctx as never, { profile: 'must-not-win', allowRestart: true })
 
-    // `commands` is the separate, optional /find-plugin registration.
-    expect(ctx.injectCalls).toEqual([['webServer', 'loader'], ['desktopPnpm'], ['settings'], ['commands']])
+    // `commands` is the separate, optional /find-plugin registration; the
+    // gate declares the login registry (#1299) so `connection.admit` can read
+    // it. Listing the declarations in order is what catches a wiring change
+    // that quietly stops asking for one of them.
+    expect(ctx.injectCalls).toEqual([
+      ['webServer', 'loader'],
+      ['desktopPnpm'],
+      ['settings'],
+      ['connection', 'connection.authentication'],
+      ['commands'],
+    ])
     expect(state.factoryArgs).toEqual([[desktopPnpm, '/private/dsh/desktop']])
     expect(state.mounts).toHaveLength(1)
     expect(state.mounts[0]).toMatchObject({

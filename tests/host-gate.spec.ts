@@ -8,6 +8,7 @@
  * deployment behind a proxy or a tunnel. The host publishes the check its own
  * API runs, `connection.requestRejection(request)`; the market now asks it.
  */
+import { Context, Service } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { refuseUnadmitted, setRequestGateSource } from '../src/http.ts'
 import { useTrustedHosts } from '../src/index.ts'
@@ -59,7 +60,23 @@ describe('refuseUnadmitted', () => {
 })
 
 describe('the gate is the host connection service\'s own, read per request', () => {
-  const contextWith = (services: Record<string, unknown>) => ({ get: (name: string) => services[name] }) as never
+  // A context holding `services` and declaring what it has: `inject` runs its
+  // callback only when every dependency is present, exactly as Cordis does, so
+  // a host missing one keeps the gate it had instead of losing it.
+  const contextWith = (services: Record<string, unknown>) => {
+    const own: Record<string, unknown> = {
+      get: (name: string) => services[name],
+      inject: (deps: string[], callback: (scoped: unknown) => unknown) => {
+        let subscription: { dispose: () => void } | undefined
+        if (deps.every(dep => dep in services)) {
+          const disposer = callback(own) as (() => void) | undefined
+          subscription = { dispose: () => { disposer?.() } }
+        }
+        return subscription ?? { dispose: () => undefined }
+      },
+    }
+    return own as never
+  }
 
   it('calls requestRejection on the service, with the service as `this`', () => {
     const services: Record<string, unknown> = {}
@@ -109,5 +126,75 @@ describe('the gate is the host connection service\'s own, read per request', () 
     expect(refuseUnadmitted(request, response() as never)).toBe(true)
     restore()
     expect(refuseUnadmitted(request, response() as never)).toBe(false)
+  })
+})
+
+/**
+ * The gate above is the host's `connection.admit`, and `admit` verifies the
+ * login through `connection.authentication` — a service property Cordis
+ * resolves through the context the connection was READ from, not the one that
+ * provided it. A reader that never declared the registry makes that read
+ * throw, and the fence turns a throw into 403: every route refused for a
+ * signed-in browser, on every host that dropped `requestRejection` (#1299).
+ *
+ * A fake context cannot show this — the throw only exists in real Cordis — so
+ * this case builds the host from the real Context and the real Service base,
+ * with the same dependency shape as dsh-client-connection.
+ */
+describe('the gate is read from a scope that declared the login registry', () => {
+  class Authentication extends Service {
+    constructor(ctx: Context) { super(ctx, 'connection.authentication') }
+    // The registry sees the facts `admissionFacts` builds, not the raw
+    // request: the session cookie arrives in `headers`.
+    authenticate(facts: { headers?: { cookie?: string } }) {
+      return facts.headers?.cookie === 'dsh_session=valid' ? { peer: {} } : { rejection: 401 }
+    }
+  }
+  class Connection extends Service {
+    static inject = ['connection.authentication']
+    authentication: Authentication
+    constructor(ctx: Context) {
+      super(ctx, 'connection')
+      this.authentication = (ctx as unknown as Record<string, Authentication>)['connection.authentication']
+    }
+    /** The host's own `admit`: the fence, then the registry above. */
+    admit(facts: { headers?: { cookie?: string } }) { return this.authentication.authenticate(facts) }
+  }
+  class WebServer extends Service {
+    constructor(ctx: Context) { super(ctx, 'webServer') }
+  }
+
+  const admitted = (session: string) => ({
+    ...request,
+    headers: { host: '127.0.0.1:3080', cookie: `dsh_session=${session}` },
+    socket: {},
+  }) as never
+
+  async function market() {
+    const root = new Context()
+    await root.plugin(Authentication)
+    await root.plugin(Connection)
+    await root.plugin(WebServer)
+    let restore: (() => void) | undefined
+    // The market's own context: it declared `webServer`, never the registry.
+    await root.plugin({
+      inject: ['webServer'],
+      apply(ctx: Context) { restore = useTrustedHosts(ctx) },
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    return { root, restore: () => { restore?.() } }
+  }
+
+  it('admits a signed-in browser and still answers 401 without one', async () => {
+    const { root, restore } = await market()
+    try {
+      expect(refuseUnadmitted(admitted('valid'), response() as never)).toBe(false)
+      const res = response()
+      expect(refuseUnadmitted(admitted('absent'), res as never)).toBe(true)
+      expect(res.sent.status).toBe(401)
+    } finally {
+      restore()
+      await root.fiber.dispose()
+    }
   })
 })

@@ -21,9 +21,24 @@ const request = (host: string) => ({ headers: { host, origin: `https://${host}` 
 const installed: Array<() => void> = []
 afterEach(() => { while (installed.length > 0) installed.pop()!() })
 
-/** A host context whose services arrive when the host's init finishes. */
+/**
+ * A host context whose services arrive when the host's init finishes.
+ *
+ * `inject` answers the way Cordis does — the callback waits until every
+ * declared service is present — which is what makes the gate's declaration of
+ * `connection.authentication` harmless on a host that never publishes it:
+ * the scope stays cold and the gate keeps reading the connection from here.
+ */
 function contextWith(services: Record<string, unknown>) {
-  return { get: (name: string) => services[name] } as never
+  const own: Record<string, unknown> = {
+    get: (name: string) => services[name],
+    inject: (deps: string[], callback: (ctx: unknown) => unknown): { dispose: () => void } => {
+      let dispose: (() => void) | undefined
+      if (deps.every(name => services[name] !== undefined)) dispose = callback(own) as (() => void) | undefined
+      return { dispose: () => { dispose?.() } }
+    },
+  }
+  return own as never
 }
 
 describe('the host authorities are read per request', () => {
