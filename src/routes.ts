@@ -9397,6 +9397,10 @@ export function mountMarketRoutes(
                 : plainTarget
             if (pinnedTarget !== plainTarget) {
               logEvent('info', 'install', `${entry.name}: pinned to the registry's latest, ${registryLatest}, so pnpm's fresh-release hold cannot substitute an older version silently`)
+            } else if (requestedVersion === null && NPM_NAME_RE.test(plainTarget)) {
+              // The bare name goes to pnpm, whose release-age hold may pick an older mature version than
+              // the one the catalog shows (#1306). Say so in the log, or the install cannot be explained.
+              logEvent('warn', 'install', `${entry.name}: could not read the registry's latest (${registryLatest === null ? 'no answer' : `unusable value ${registryLatest}`}), so pnpm resolves the bare name and may install an older version than the catalog lists`)
             }
             // Resolve GitHub HEAD through the region's available routes, then
             // let pnpm fetch the canonical commit-pinned target.
