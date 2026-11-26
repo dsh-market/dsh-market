@@ -81,6 +81,9 @@ export function Masonry<T>({ items, render, maxColumns = 3, minColumns = 2, clas
       if (nodes.length !== dealt) return
       for (let slot = 0; slot < dealt; slot += 1) heights[slot * columns + column] = nodes[slot]!.getBoundingClientRect().height
     }
+    // The original ranked deal is already in place when measurements are
+    // unavailable. Don't mark it settled: a later render can measure again.
+    if (heights.some(height => !Number.isFinite(height) || height <= 0)) return
     const placed = balanceColumns(heights, columns)
     setBalanced({ items, columns, assign: placed })
   })

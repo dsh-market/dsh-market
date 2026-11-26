@@ -10170,6 +10170,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     stubUpdateReminders()
     render(<MarketSection {...props()} />)
     await openInstalledTab()
+    await screen.findByRole('button', { name: /Update all \(2\)/ })
     await ignoreRowUntilRestart('dsh-loop')
     await ignoreRowUntilRestart('dsh-notify')
     // The market's own new version keeps the dot lit until its notice is closed.
@@ -10192,6 +10193,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     stubUpdateReminders('boot-1')
     const first = render(<MarketSection {...props()} />)
     await openInstalledTab()
+    await screen.findByRole('button', { name: /Update all \(2\)/ })
     await ignoreRowUntilRestart('dsh-loop')
     await ignoreRowUntilRestart('dsh-notify')
     closeMarketOffer()
@@ -10322,6 +10324,8 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     })
     render(<MarketSection {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: /^Installed/ }))
+    // The update response must settle before its row menu is opened.
+    await screen.findByRole('button', { name: /Update all \(2\)/ })
     let row: HTMLElement | null = await screen.findByText('dsh-loop')
     while (row !== null && within(row).queryByRole('button', { name: en.groupMore }) === null) row = row.parentElement
     fireEvent.click(within(row!).getByRole('button', { name: en.groupMore }))
@@ -10449,11 +10453,12 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
     error: 'PROSE-FALLBACK-FOR-LOGS',
   }
 
-  /** Install the first card, then follow its marker into the panel. */
-  const installFirstCard = async () => {
+  /** Install the named candidate, independent of the grid's column placement. */
+  const installNotifyCard = async () => {
     render(<MarketSection {...props()} />)
-    await screen.findByText('dsh-loop')
-    fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
+    const card = (await screen.findByRole('button', { name: 'dsh-notify' })).closest<HTMLElement>(`.${css.card}`)
+    expect(card).not.toBeNull()
+    fireEvent.click(within(card!).getByRole('button', { name: en.install }))
     fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
     // The card must say something: one that looks untouched invites pressing
     // Install again, which is how the same clash gets hit twice.
@@ -10463,7 +10468,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
 
   it('names the clashing plugin, and keeps entry ids out of the decision', async () => {
     stubFetch({ '/dsh-market/install': clash })
-    await installFirstCard()
+    await installNotifyCard()
 
     expect(screen.getByText('dsh-tui-core')).toBeTruthy()
     // Entry ids are evidence, not part of the choice: a reader deciding which
@@ -10489,7 +10494,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
       { owner: 'dsh-tui-core', ids: ['storage'] },
       { owner: 'dsh-panel-kit', ids: ['panel'] },
     ] } })
-    await installFirstCard()
+    await installNotifyCard()
 
     // Both owners, each with only the id it actually declares — the whole
     // point of grouping rather than listing every id against the first name.
@@ -10507,7 +10512,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
     // the list IS the consequence: the side that loses is struck through and
     // tagged, so the choice can be read without parsing a sentence.
     stubFetch({ '/dsh-market/install': clash })
-    await installFirstCard()
+    await installNotifyCard()
 
     // Scoped to the decision: the plugin name also appears on the card.
     const decision = screen.getByText(re(en.conflictBody)).parentElement as HTMLElement
@@ -10525,7 +10530,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
     // Re-pressing the control that opened a popover is the one dismissal
     // route nobody looks for, so it cannot be the only one.
     stubFetch({ '/dsh-market/install': clash })
-    await installFirstCard()
+    await installNotifyCard()
 
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText(re(en.conflictBody))).toBeNull())
@@ -10546,7 +10551,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
     // whole safety of this screen: confirming without touching it must not
     // remove a working plugin.
     stubFetch({ '/dsh-market/install': clash, '/dsh-market/uninstall': { ok: true, installed: {} } })
-    await installFirstCard()
+    await installNotifyCard()
 
     expect((screen.getByRole('radio', { name: re(en.conflictKeep) }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('radio', { name: re(en.conflictSwap) }) as HTMLInputElement).checked).toBe(false)
@@ -10565,7 +10570,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
       },
       '/dsh-market/uninstall': { ok: true, hot: true, installed: {} },
     })
-    await installFirstCard()
+    await installNotifyCard()
 
     // The safe outcome is preselected, so the swap only happens once the
     // user actively moves off it.
@@ -10591,7 +10596,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
         return removes === 1 ? { ok: true, installed: {} } : { ok: false, error: 'EBUSY' }
       },
     })
-    await installFirstCard()
+    await installNotifyCard()
 
     fireEvent.click(screen.getByRole('radio', { name: re(en.conflictSwap) }))
     fireEvent.click(screen.getByRole('button', { name: en.confirm }))

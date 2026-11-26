@@ -5196,21 +5196,36 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* keeps the ranking reading top-down; the last few are tried in every
 		* arrangement and the one whose columns end closest together wins, because
 		* that is where a ragged bottom edge shows (at most 3^9 arrangements).
+		* Incomplete measurements preserve the original ranked deal. Equally good
+		* layouts favour the earlier ranks' shortest-column assignments, rather than
+		* whichever mirrored/reordered arrangement the enumeration happened to visit.
 		*/
 		function balanceColumns(heights, columns, gap = 10) {
+			for (const measured of heights) if (!Number.isFinite(measured) || measured <= 0) return Array.from({ length: heights.length }, (_item, index) => index % columns);
 			const tail = Math.min(heights.length, columns === 2 ? 12 : 9);
 			const head = heights.length - tail;
 			const height = (index) => (heights[index] ?? 0) + gap;
 			const depth = Array.from({ length: columns }, () => 0);
-			const placed = [];
-			for (let index = 0; index < head; index += 1) {
+			const placeShortest = (index, depths) => {
 				let shortest = 0;
-				for (let column = 1; column < columns; column += 1) if (depth[column] < depth[shortest]) shortest = column;
-				depth[shortest] += height(index);
-				placed.push(shortest);
-			}
-			let best = [];
-			let bestSpread = Infinity;
+				for (let column = 1; column < columns; column += 1) if (depths[column] < depths[shortest]) shortest = column;
+				depths[shortest] += height(index);
+				return shortest;
+			};
+			const placed = Array.from({ length: head }, (_item, index) => placeShortest(index, depth));
+			const greedyDepth = depth.slice();
+			const greedy = Array.from({ length: tail }, (_item, slot) => placeShortest(head + slot, greedyDepth));
+			let best = greedy;
+			let bestSpread = Math.max(...greedyDepth) - Math.min(...greedyDepth);
+			const prefersRank = (picks, current) => {
+				for (let slot = 0; slot < tail; slot += 1) {
+					if (picks[slot] === current[slot]) continue;
+					if (picks[slot] === greedy[slot]) return true;
+					if (current[slot] === greedy[slot]) return false;
+					return picks[slot] < current[slot];
+				}
+				return false;
+			};
 			for (let code = 0; code < columns ** tail; code += 1) {
 				const trial = depth.slice();
 				const picks = [];
@@ -5220,7 +5235,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					trial[column] += height(head + slot);
 				}
 				const spread = Math.max(...trial) - Math.min(...trial);
-				if (spread < bestSpread - 1) {
+				if (spread < bestSpread - 1 || spread === bestSpread && prefersRank(picks, best)) {
 					bestSpread = spread;
 					best = picks;
 				}
@@ -16807,6 +16822,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					if (nodes.length !== dealt) return;
 					for (let slot = 0; slot < dealt; slot += 1) heights[slot * columns + column] = nodes[slot].getBoundingClientRect().height;
 				}
+				if (heights.some((height) => !Number.isFinite(height) || height <= 0)) return;
 				const placed = balanceColumns(heights, columns);
 				setBalanced({
 					items,
