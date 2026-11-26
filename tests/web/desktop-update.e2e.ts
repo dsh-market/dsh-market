@@ -22,6 +22,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { load as loadYaml } from 'js-yaml'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { compareVersions } from '../../src/updates.ts'
 import { dshHostVersion } from './market-build.ts'
@@ -195,6 +196,9 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the official desktop branch drive
     // Two valid updates may still be waiting for a restart. A failed third
     // update must restore the last build on disk, even in that state.
     expect(diskVersion(), body).toBe('1.1.5')
+    expect(loadYaml(readFileSync(join(profile(), 'pnpm-lock.yaml'), 'utf8'))).toMatchObject({
+      importers: { '.': { dependencies: { [A]: { version: '1.1.5' } } } },
+    })
     expect(journal()).not.toContain('"to": "1.2.0"')
     if (mode === 'restart') {
       expect(runningVersion()).toBe('1.0.0')
