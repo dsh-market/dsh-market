@@ -11913,6 +11913,201 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     name: 'dsh-loop', version, engines: { dsh }, 'dist-tags': { latest: version },
   })
 
+  describe('host-aware update list (#1307)', () => {
+    const installedVersion = '1.0.0'
+    const compatible = `>=${HOST_VERSION}`
+    const incompatible = '>=99.0.0'
+
+    async function publish(
+      requirements: Record<string, string | undefined>,
+      latest: string,
+      { desktop = false, young = [], unavailable = [], historyUnavailable = false }: {
+        desktop?: boolean; young?: string[]; unavailable?: string[]; historyUnavailable?: boolean
+      } = {},
+    ): Promise<void> {
+      const pkg = { dsh: {}, main: 'lib/index.js' }
+      const history = { [installedVersion]: compatible, ...requirements }
+      const release = (version: string) => ({
+        ...pkg, name: 'dsh-loop', version,
+        ...(history[version] === undefined ? {} : { engines: { dsh: history[version] } }),
+      })
+      fake.npm['dsh-loop'] = {
+        latest: installedVersion,
+        versions: Object.fromEntries(Object.keys(history).map(version => [version, {
+          manifest: release(version), artifacts: ['lib/index.js'],
+        }])),
+      }
+      expect((await bed.dispatch('GET', '/dsh-market/registry')).json.hostVersion).toBe(HOST_VERSION)
+      expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: installedVersion })).status).toBe(200)
+      if (desktop) {
+        bed.dispose()
+        bed = createTestbed({ desktopHost: true })
+        writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+      }
+      fake.calls = []
+      fake.npm['dsh-loop'].latest = latest
+
+      const old = new Date(Date.now() - 72 * 3_600_000).toISOString()
+      const recent = new Date(Date.now() - 3_600_000).toISOString()
+      const previous = globalThis.fetch
+      vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify(release(latest)))
+        if (/\/dsh-loop(?:\?t=\d+)?$/.test(url) && historyUnavailable) return new Response('{}', { status: 503 })
+        if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+          'dist-tags': { latest },
+          versions: Object.fromEntries(Object.keys(history).map(version => [version, release(version)])),
+          time: Object.fromEntries(Object.keys(history).map(version => [version, young.includes(version) ? recent : old])),
+        }))
+        const exact = /\/dsh-loop\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(url)
+        if (exact !== null && unavailable.includes(exact[1]!)) return new Response('{}', { status: 503 })
+        if (exact !== null && exact[1]! in history) return new Response(JSON.stringify(release(exact[1]!)))
+        return previous(input as string, init)
+      }))
+    }
+
+    async function list(): Promise<Record<string, unknown>> {
+      const checked = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(checked.status).toBe(200)
+      return checked.json.updates['dsh-loop']
+    }
+
+    it('excludes an incompatible-only upgrade from the list and aggregate, without claiming that it is current', async () => {
+      await publish({ '1.1.0': incompatible }, '1.1.0')
+      expect(await list()).toMatchObject({
+        current: installedVersion,
+        latest: '1.1.0',
+        updateAvailable: false,
+        hostUpdateBlocked: { version: '1.1.0', requirement: incompatible, hostVersion: HOST_VERSION },
+      })
+      const summary = await bed.dispatch('GET', '/dsh-market/api/v1/updates/summary')
+      expect(summary.status).toBe(200)
+      expect(summary.json.packages.map((entry: { name: string }) => entry.name)).not.toContain('dsh-loop')
+      // An old client that still sends the request must not be allowed to
+      // install the incompatible version, even though the list hides it.
+      const refused = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(refused.status).toBe(400)
+      expect(refused.json.hostIncompatible).toMatchObject({ version: '1.1.0', requirement: incompatible })
+      expect(fake.calls).toEqual([])
+      expect(installedSpec('dsh-loop')).toBe(`^${installedVersion}`)
+    })
+
+    it('lists the newest confirmed-compatible upgrade and updates that exact release', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': compatible, '1.3.0': incompatible }, '1.3.0')
+      const status = await list()
+      expect(status).toMatchObject({ latest: '1.3.0', updateAvailable: true, compatibleVersion: '1.2.0' })
+      expect(status.hostUpdateBlocked).toBeUndefined()
+      const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: status.compatibleVersion })
+      expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+      expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.2.0']])
+      expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+    })
+
+    it('rejects a previously offered npm compatibility target when the installed source changes to Git', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': incompatible }, '1.2.0')
+      const status = await list()
+      expect(status.compatibleVersion).toBe('1.1.0')
+      // A queued exact target must not become an unrelated Git update if a
+      // different client changed where this plugin is installed from.
+      const git = 'github:o/dsh-loop'
+      const profile = readManifestAt(fake.profileDir)
+      writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+        ...profile, dependencies: { ...profile.dependencies, 'dsh-loop': git },
+      }))
+      fake.repos[git] = { name: 'dsh-loop', manifest: { version: '3.0.0', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+      const refused = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: status.compatibleVersion })
+      expect(refused.status).toBe(409)
+      expect(refused.json.staleTarget).toBe(true)
+      expect(fake.calls).toEqual([])
+      expect(installedSpec('dsh-loop')).toBe(git)
+    })
+
+    it('uses the compatible target in the public update API summary, detail and operation', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': incompatible }, '1.2.0')
+      const summary = await bed.dispatch('GET', '/dsh-market/api/v1/updates/summary')
+      expect(summary.status).toBe(200)
+      expect(summary.json.packages).toContainEqual({ name: 'dsh-loop', source: 'npm', installedVersion, latestVersion: '1.1.0' })
+      const detail = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-loop')
+      expect(detail.status).toBe(200)
+      expect(detail.json.package).toMatchObject({ latestVersion: '1.1.0', updateAvailable: true })
+      const accepted = await bed.dispatch('POST', '/dsh-market/api/v1/updates', { packageName: 'dsh-loop' })
+      expect(accepted.status).toBe(202)
+      const operationId = String(accepted.json.operation.operationId)
+      let completed = await bed.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+      for (let attempt = 0; attempt < 30 && completed.json.operation.state === 'running'; attempt += 1) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 5))
+        completed = await bed.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+      }
+      expect(completed.json.operation).toMatchObject({ state: 'succeeded', beforeVersion: installedVersion, installedVersion: '1.1.0' })
+      expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.1.0']])
+    })
+
+    it('does not suppress an update that declares no host requirement', async () => {
+      await publish({ '1.1.0': undefined }, '1.1.0')
+      const status = await list()
+      expect(status).toMatchObject({ latest: '1.1.0', updateAvailable: true })
+      expect(status.compatibleVersion).toBeUndefined()
+      expect(status.hostUpdateBlocked).toBeUndefined()
+    })
+
+    it('does not claim that no compatible alternative exists when the history is unavailable', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': incompatible }, '1.2.0', { historyUnavailable: true })
+      const status = await list()
+      expect(status).toMatchObject({ latest: '1.2.0', updateAvailable: true })
+      expect(status.compatibleVersion).toBeUndefined()
+      expect(status.hostUpdateBlocked).toBeUndefined()
+    })
+
+    it('does not suppress the mature target when its host metadata cannot be read', async () => {
+      await publish({ '1.1.0': undefined, '1.2.0': incompatible }, '1.2.0', {
+        desktop: true, young: ['1.2.0'], unavailable: ['1.1.0'],
+      })
+      const status = await list()
+      expect(status).toMatchObject({ latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true, heldUpdate: { latest: '1.2.0' } })
+      expect(status.compatibleVersion).toBeUndefined()
+      expect(status.hostUpdateBlocked).toBeUndefined()
+    })
+
+    it('does not hide a compatible mature target merely because the held latest requires a newer host', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': incompatible }, '1.2.0', { desktop: true, young: ['1.2.0'] })
+      const status = await list()
+      expect(status).toMatchObject({ latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true, heldUpdate: { latest: '1.2.0' } })
+      expect(status.compatibleVersion).toBeUndefined()
+      expect(status.hostUpdateBlocked).toBeUndefined()
+    })
+
+    it('does not silently replace an organization-pinned release with a different compatible version', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': incompatible, '1.3.0': compatible }, '1.3.0')
+      const policy = join(home, 'policy.json')
+      writeFileSync(policy, JSON.stringify({ pins: { 'dsh-loop': '1.2.0' } }))
+      vi.stubEnv('DSH_MARKET_POLICY', policy)
+      resetPolicyCache()
+      try {
+        const status = await list()
+        expect(status).toMatchObject({ latest: '1.2.0', updateAvailable: false,
+          hostUpdateBlocked: { version: '1.2.0', requirement: incompatible, hostVersion: HOST_VERSION },
+        })
+        expect(status.compatibleVersion).toBeUndefined()
+        expect(fake.calls).toEqual([])
+      } finally {
+        vi.unstubAllEnvs()
+        resetPolicyCache()
+      }
+    })
+
+    it('preserves Desktop maturity and selects only a compatible, mature, stable upgrade', async () => {
+      await publish({ '1.1.0': compatible, '1.2.0': incompatible, '1.3.0': compatible, '1.4.0-beta.1': compatible, '1.4.0': incompatible }, '1.4.0', {
+        desktop: true, young: ['1.3.0', '1.4.0'],
+      })
+      const status = await list()
+      expect(status).toMatchObject({ latest: '1.4.0', updateAvailable: true, compatibleVersion: '1.1.0', heldUpdate: { latest: '1.4.0' } })
+      expect(status.eligibleVersion).toBeUndefined()
+      const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: status.compatibleVersion })
+      expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+      expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.1.0']])
+    })
+  })
+
   it('does not offer a stable Desktop install a prerelease its update would refuse (#1161)', async () => {
     // The Desktop moves a stable npm install only to a stable release (#991).
     // The compatibility search used to rank prereleases in, so the dialog's

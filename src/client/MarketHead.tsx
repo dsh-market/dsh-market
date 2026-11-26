@@ -51,7 +51,7 @@ type MarketHeadCtx = { props: MarketSectionProps }
     'restartHold' | 'restartReachable' | 'restarting' | 'restoreErrors' | 'rollingBack' |
     'setBuildsSkipped' | 'setCat' | 'setOperationsOpen' | 'setQ' | 'setRecords' | 'setRecoveryOpen' |
     'setRestartNoticeDismissed' | 'setRestoreConfirmOpen' | 'setSidebarTipDismissed' | 'setTab' |
-    'showSidebarTip' | 'sidebarTipError' | 'sidebarTipSaving' | 'staleName' | 'startupRepair' |
+    'showSidebarTip' | 'sidebarTipError' | 'sidebarTipSaving' | 'staleUpdate' | 'startupRepair' |
     'supervisor' | 'surface' | 't' | 'tab' | 'themeSnap' | 'uiLocale' | 'updates' | 'updatingName' |
     'version' | 'hostCaps' | 'restartNames' | 'updatedNames' | 'activations'>
   & Pick<MarketSyncCtx, 'fixEnv'>
@@ -83,7 +83,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
     restartEnabled, restartHold, restartReachable, restarting, restoreErrors, rollingBack,
     runQueuedNow, setBuildsSkipped, setCat, setOperationsOpen, setQ, setRecords, setRecoveryOpen,
     setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary,
-    showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName,
+    showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleUpdate,
     startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates,
     updatingName, version, marketOffer, takeMarketOffer, hostCaps, restartNames, updatedNames, activations,
   } = c
@@ -301,7 +301,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
               const plugin = record.url === undefined ? undefined : data?.plugins.find(p => p.url === record.url)
               approveAndRetry(names, () => {
                 if (plugin !== undefined) doInstall(plugin)
-                else doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, false, record.updateOptions?.eligibleVersion)
+                else doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, false, record.updateOptions?.eligibleVersion, false, record.updateOptions?.compatibleVersion ?? null)
               })
             }}
           />
@@ -532,9 +532,9 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
           onCheck={checkUpdateNotifications}
           onEnabled={setUpdateNotificationsEnabled}
           onIntervalHours={setUpdateNotificationsIntervalHours}
-          onUpdate={name => {
+          onUpdate={(name, selectedCompatibleVersion) => {
             if (updates[name]?.restoreRequired === true) askRestore(name)
-            else doUpdate(name)
+            else doUpdate(name, false, false, undefined, false, undefined, false, selectedCompatibleVersion)
           }}
           onOpenHost={openInHost === undefined ? undefined : name => openInHost.openBundle(name)}
         />}
@@ -593,7 +593,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
               setBuildsSkipped(null)
               approveAndRetry(names, () => {
                 if (plugin !== undefined) doInstall(plugin)
-                else if (updateName !== undefined) doUpdate(updateName, updateOptions?.force, updateOptions?.restore, updateOptions?.compatVersion, false, updateOptions?.eligibleVersion)
+                else if (updateName !== undefined) doUpdate(updateName, updateOptions?.force, updateOptions?.restore, updateOptions?.compatVersion, false, updateOptions?.eligibleVersion, false, updateOptions?.compatibleVersion ?? null)
               })
             }}
           >{t('approveBuilds')}</Button>
@@ -658,8 +658,10 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
                 was reported as "there is no such button" — @Dave-12138
                 spotted it in the reporter's own screenshot: it was there,
                 it just did not look like one. */}
-            {staleName !== null && (
-              <Button variant="primary" size="sm" onClick={() => doUpdate(staleName, true)}>{t('updateNow')}</Button>
+            {staleUpdate !== null && updates[staleUpdate.name]?.hostUpdateBlocked === undefined
+              && (staleUpdate.exactVersion !== undefined && staleUpdate.compatibleVersion === undefined
+                || updates[staleUpdate.name]?.compatibleVersion === staleUpdate.compatibleVersion) && (
+              <Button variant="primary" size="sm" onClick={() => doUpdate(staleUpdate.name, true, false, staleUpdate.exactVersion)}>{t('updateNow')}</Button>
             )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
             <Button

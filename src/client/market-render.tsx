@@ -15,6 +15,7 @@ import {
   pluginCategories,
   pluginName,
   type RegistryPlugin,
+  offeredUpdateVersion,
   themePlugins as themePluginsOf,
 } from './market-data.ts'
 import css from './Market.module.css'
@@ -1084,7 +1085,7 @@ export function useMarketRender(c: MarketRenderIn) {
 
   const marketUpdateStatus = updates[selfName]
   const eligibleMarketVersion = marketUpdateStatus?.updateAvailable === true
-    ? marketUpdateStatus.eligibleVersion ?? marketUpdateStatus.latest ?? null
+    ? offeredUpdateVersion(marketUpdateStatus)
     : null
   const heldMarketVersion = marketUpdateStatus?.heldUpdate
   const showMarketWait = typeof heldMarketVersion?.latest === 'string'
@@ -1102,7 +1103,7 @@ export function useMarketRender(c: MarketRenderIn) {
     if (!status || !status.updateAvailable || updatedNames.includes(self) || quietUpdateSet.has(self)) return null
     return {
       name: self,
-      version: status.eligibleVersion ?? status.latest ?? null,
+      version: offeredUpdateVersion(status),
       restoreRequired: status.restoreRequired === true,
     }
   })()

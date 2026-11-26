@@ -183,6 +183,84 @@ describe('Issue #991 approval target and queue feedback', () => {
   })
 })
 
+
+describe('host-compatible update offers (#1307)', () => {
+  const alternate = {
+    kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.3.0', compatibleVersion: '1.1.0', updateAvailable: true,
+  }
+  const blocked = {
+    kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.3.0', updateAvailable: false,
+    hostUpdateBlocked: { version: '1.3.0', requirement: '>=0.2.3-alpha.2', hostVersion: '0.2.2-rc.5' },
+  }
+
+  it.each(['row', 'batch', 'restored queue'])('uses the same exact compatible target through the %s, excluding blocked releases', async entry => {
+    if (entry === 'restored queue') localStorage.setItem('dshm-queue-v1', JSON.stringify([
+      { kind: 'update', name: 'dsh-loop', updateOptions: { compatibleVersion: '1.1.0' } },
+    ]))
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0', 'dsh-other': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': alternate, 'dsh-other': blocked } },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    if (entry !== 'restored queue') {
+      fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+      expect(await screen.findByText('Needs DSH >=0.2.3-alpha.2')).toBeTruthy()
+      const button = screen.getByRole('button', { name: 'Update v1.1.0' })
+      expect(screen.queryByRole('button', { name: 'Update v1.3.0' })).toBeNull()
+      expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+      fireEvent.click(entry === 'row' ? button : screen.getByRole('button', { name: 'Update all (1)' }))
+    }
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
+      .toEqual([{ name: 'dsh-loop', compatVersion: '1.1.0' }]), { timeout: 8000 })
+  })
+
+
+  it('pins the compatible version when retrying a stale response', async () => {
+    let attempts = 0
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': alternate } },
+      '/dsh-market/update': () => ++attempts === 1
+        ? { ok: false, stale: true, error: 'too fresh — wait or update now' } : { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    fireEvent.click(await screen.findByRole('button', { name: en.updateNow }))
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body)).toEqual([
+      { name: 'dsh-loop', compatVersion: '1.1.0' },
+      { name: 'dsh-loop', compatVersion: '1.1.0', force: true },
+    ]))
+  })
+
+  it('does not drain a restored compatible target after the target changes', async () => {
+    localStorage.setItem('dshm-queue-v1', JSON.stringify([
+      { kind: 'update', name: 'dsh-loop', updateOptions: { compatibleVersion: '1.1.0' } },
+    ]))
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { ...alternate, compatibleVersion: '1.2.0' } } },
+    })
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByText(en.updateTargetChanged)).toBeTruthy()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+  })
+
+  it('does not call a blocked-only update current or offer Update all', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': blocked } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    expect(await screen.findByText('Needs DSH >=0.2.3-alpha.2')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Update v1.3.0' })).toBeNull()
+    expect(screen.queryByTitle(en.upToDate)).toBeNull()
+  })
+})
+
 const REGISTRY = {
   updated: '', count: 4,
   categories: { tools: { en: 'Tools', zh: '工具' }, skill: { en: 'Skills', zh: '技能包' }, theme: { en: 'Themes', zh: '主题' } },

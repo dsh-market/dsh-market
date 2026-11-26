@@ -16,6 +16,8 @@ import {
   isInstalled,
   localizeBilingualList,
   profileBlockedText,
+  offeredUpdateVersion,
+  hostUpdateBlockedText,
 } from './market-data.ts'
 import {
   IconChevronDownOutline14,
@@ -527,7 +529,7 @@ export function InstalledTab({ c }: { c: InstalledTabCtx }) {
                                 status?.current ?? null,
                                 status?.latest ?? null,
                                 // Prefer the mature install target (#1193); else latest.
-                                status?.eligibleVersion ?? status?.latest ?? null,
+                                status === undefined ? null : offeredUpdateVersion(status),
                                 repoUrl,
                               )}
                             >{`${t('notesLink')} ›`}</button>
@@ -830,6 +832,23 @@ export function InstalledTab({ c }: { c: InstalledTabCtx }) {
                           ? <Button variant="outline" size="sm" className={css.irowUpdateBtn} disabled>{t('updating')}</Button>
                           : status !== undefined && generation && status.latest != null
                             ? <span className={css.metaTag} title={t('hostUpdateHint')}>{t('hostUpdateReady').replace('{0}', status.latest)}</span>
+                          : status?.hostUpdateBlocked !== undefined && status.updateAvailable !== true
+                            ? (() => {
+                                const held = status.heldUpdate === undefined ? null : heldUpdateBeside(status.heldUpdate, t)
+                                const blocked = status.hostUpdateBlocked
+                                return <>
+                                  {held !== null && (
+                                    <Tooltip label={held.title} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                      <span className={css.irowTrailingHint}><IconClock size={12} />{held.label}</span>
+                                    </Tooltip>
+                                  )}
+                                  <Tooltip label={hostUpdateBlockedText(blocked, t)} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                    <span className={css.irowTrailingHint}>{held !== null || blocked.requirement === null
+                                      ? t('hostUpdateBlockedBeside')
+                                      : t('hostUpdateBlockedBesideRequirement').replace('{0}', blocked.requirement)}</span>
+                                  </Tooltip>
+                                </>
+                              })()
                           : status?.profileBlocked !== undefined && status.updateAvailable !== true
                             // Another release in the profile is in the way (#1252).
                             // One short word here; the sentence is in the tooltip
@@ -873,7 +892,7 @@ export function InstalledTab({ c }: { c: InstalledTabCtx }) {
                                             // Status fact is versionless; the button is the
                                             // one place that still names the target. Prefer
                                             // the mature eligible cut, else latest (#layout).
-                                            const target = status.eligibleVersion ?? status.latest
+                                            const target = offeredUpdateVersion(status)
                                             return target != null && target !== ''
                                               ? `${t('update')} ${displayLatest(target)}`
                                               : t('update')

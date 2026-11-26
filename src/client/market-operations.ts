@@ -10,6 +10,7 @@ import {
   type DrainOperationWire,
   entryForDep,
   failureText,
+  hostUpdateBlockedText,
   localizeBilingual,
   resolveCatalogRestore,
 } from './market-data.ts'
@@ -35,7 +36,7 @@ type MarketOperationsIn = { props: MarketSectionProps }
     'setNotingName' | 'setOperationsOpen' | 'setRecords' | 'setRecovery' | 'setRecoveryBusy' |
     'setRecoveryKeep' | 'setRecoveryOpen' | 'setRefreshNames' | 'setRemoveConfirm' |
     'setRemovedCount' | 'setRemovingName' | 'setRestartHold' | 'setRestartNames' | 'setRestarting' |
-    'setRestoreBlocked' | 'setRestoreConfirm' | 'setStaleName' | 'setUpdateExemptError' |
+    'setRestoreBlocked' | 'setRestoreConfirm' | 'setStaleUpdate' | 'setUpdateExemptError' |
     'setUpdateExemptNames' | 'setUpdateExemptNotice' | 'setUpdateNotes' | 'setUpdatedNames' |
     'setUpdatingName' | 'statusRef' | 't' | 'updateExemptNames' | 'updateExemptOpGen' |
     'updateIdleStrikes' | 'updates'>
@@ -59,7 +60,7 @@ export function useMarketOperations(c: MarketOperationsIn) {
     setNotesState, setNotingName, setOperationsOpen, setRecords, setRecovery, setRecoveryBusy,
     setRecoveryKeep, setRecoveryOpen, setRefreshNames, setRemoveConfirm, setRemovedCount,
     setRemovingName, setRestartHold, setRestartNames, setRestarting, setRestoreBlocked,
-    setRestoreConfirm, setStaleName, setUpdateExemptError, setUpdateExemptNames,
+    setRestoreConfirm, setStaleUpdate, setUpdateExemptError, setUpdateExemptNames,
     setUpdateExemptNotice, setUpdateNotes, setUpdatedNames, setUpdatingName, statusRef, t,
     updateExemptNames, updateExemptOpGen, updateExemptSet, updateIdleStrikes, updates,
   } = c
@@ -230,17 +231,33 @@ export function useMarketOperations(c: MarketOperationsIn) {
       .catch(() => {})
   }, [])
 
-  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false, eligibleVersion?: string, preferReject = false) => {
-    const expectedVersion = compatVersion === undefined && !restore
-      ? (eligibleVersion ?? updates[name]?.eligibleVersion) : undefined
-    const updateOptions = { force, restore, compatVersion, eligibleVersion: expectedVersion }
+  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false, eligibleVersion?: string, preferReject = false, selectedCompatibleVersion?: string | null) => {
+    const status = updates[name]
+    const automatic = compatVersion === undefined && !force && !restore
+    // Automatic offers use a distinct stored target from the manual dialog
+    // choice, so a refresh cannot silently substitute a different release.
+    if (automatic && (status?.hostUpdateBlocked !== undefined ||
+        (selectedCompatibleVersion !== undefined && selectedCompatibleVersion !== (status?.compatibleVersion ?? null)))) {
+      const reason = status?.hostUpdateBlocked === undefined
+        ? t('updateTargetChanged') : hostUpdateBlockedText(status.hostUpdateBlocked, t)
+      setRecords(list => enqueue(list, { id: nextRecordId(), kind: 'update', name, state: 'failed', reason }))
+      setInstallError(reason)
+      setOperationsOpen(true)
+      return Promise.resolve()
+    }
+    const compatibleVersion = automatic ? status?.compatibleVersion : undefined
+    const exactVersion = compatVersion ?? compatibleVersion
+    const expectedVersion = exactVersion === undefined && !restore
+      ? (eligibleVersion ?? status?.eligibleVersion) : undefined
+    const updateOptions = { force, restore, compatVersion, eligibleVersion: expectedVersion,
+      ...(compatibleVersion === undefined ? {} : { compatibleVersion }) }
     setInstallError(null)
     setActivationWarnings([])
     // Only THIS row's stale marker is cleared. "Update all" walks the list
     // calling straight into here, so an unconditional reset meant every
     // earlier release-age failure lost its retry button and only the last
     // one kept it — the rest failed silently with no way forward (#255).
-    setStaleName(prev => (prev === name ? null : prev))
+    setStaleUpdate(prev => (prev?.name === name ? null : prev))
     setRestoreConfirm(prev => (prev?.name === name ? null : prev))
     setMigrationConfirm(null)
     setUpdatingName(name)
@@ -266,7 +283,7 @@ export function useMarketOperations(c: MarketOperationsIn) {
         name,
         ...(force ? { force: true } : {}),
         ...(restore ? { restore: true } : {}),
-        ...(compatVersion !== undefined ? { compatVersion } : {}),
+        ...(exactVersion !== undefined ? { compatVersion: exactVersion } : {}),
         ...(expectedVersion !== undefined ? { eligibleVersion: expectedVersion } : {}),
         ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}),
         // `restore` is deliberately outside drain mode: a local-development
@@ -388,7 +405,7 @@ export function useMarketOperations(c: MarketOperationsIn) {
             // The Host lost the drain capability after the status sample;
             // retry once on the ordinary reject path (FR-9).
             setRecords(list => drop(list, updateRecordId))
-            void doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, eligibleVersion, true)
+            void doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, eligibleVersion, true, compatibleVersion ?? null)
             return
           }
           // A wait is a failure with its own answer below, not a lock to queue behind.
@@ -456,7 +473,8 @@ export function useMarketOperations(c: MarketOperationsIn) {
             })
             return
           }
-          if (body.stale === true) setStaleName(name)
+          if (body.stale === true) setStaleUpdate({ name, ...(exactVersion === undefined ? {} : { exactVersion }),
+            ...(compatibleVersion === undefined ? {} : { compatibleVersion }) })
           // Blocked build scripts during an update (#69): same
           // approve-and-retry banner as the install flow, retrying the update.
           if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) {
@@ -544,7 +562,7 @@ export function useMarketOperations(c: MarketOperationsIn) {
     const migration = updates[name]?.sourceMigration
     const source = installed[name]
 
-    setStaleName(null)
+    setStaleUpdate(null)
     setRestoreConfirm(null)
     setRestoreBlocked(null)
     setInstallError(null)
@@ -567,7 +585,7 @@ export function useMarketOperations(c: MarketOperationsIn) {
     const spec = installed[name]
     if (spec === undefined) return
     const specText = String(spec)
-    setStaleName(null)
+    setStaleUpdate(null)
     setMigrationConfirm(null)
     setRestoreBlocked(null)
     if (/^(?:link|file):/i.test(specText)) {

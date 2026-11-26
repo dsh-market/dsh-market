@@ -14,6 +14,25 @@ const snapshot = (overrides: Partial<UpdateNotificationSnapshot> = {}): UpdateNo
 afterEach(() => { cleanup(); sessionStorage.clear() })
 
 describe('shared update review', () => {
+  it('names the compatible exact target and reports host-blocked releases without an update action', () => {
+    const onUpdate = vi.fn()
+    render(<UpdateNotificationsPanel t={t} busy={false} onUpdate={onUpdate}
+      onCheck={vi.fn()} onEnabled={vi.fn()} onIntervalHours={vi.fn()}
+      snapshot={snapshot({ updates: {
+        'dsh-compatible': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.3.0', updateAvailable: true, compatibleVersion: '1.1.0' },
+        'dsh-blocked': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.3.0', updateAvailable: false,
+          hostUpdateBlocked: { version: '1.3.0', requirement: '>=0.2.3-alpha.2', hostVersion: '0.2.2-rc.5' } },
+      } })} />)
+    fireEvent.click(screen.getByText(en.updateChecksTitle))
+    expect(screen.getByText(en.updateChecksFound.replace('{0}', '1'))).toBeTruthy()
+    expect(screen.getByText('1.0.0 → 1.1.0')).toBeTruthy()
+    expect(screen.getByText('Version 1.3.0 requires DSH >=0.2.3-alpha.2. No compatible update is currently available.')).toBeTruthy()
+    const blockedRow = screen.getByText('dsh-blocked').closest('li')!
+    expect(within(blockedRow).queryByRole('button', { name: en.update })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.update }))
+    expect(onUpdate).toHaveBeenCalledWith('dsh-compatible', '1.1.0')
+  })
+
   it.each([en, zh, ja])('offers all four intervals while automatic checks are off', async locale => {
     const onEnabled = vi.fn()
     const onIntervalHours = vi.fn().mockResolvedValue(undefined)
@@ -95,7 +114,7 @@ describe('shared update review', () => {
     fireEvent.click(within(desktopRow).getByRole('button', { name: en.updateChecksOpenHost }))
     expect(onOpenHost).toHaveBeenCalledWith('desktopPlugin')
     fireEvent.click(screen.getByRole('button', { name: en.update }))
-    expect(onUpdate).toHaveBeenCalledWith('dshmarket')
+    expect(onUpdate).toHaveBeenCalledWith('dshmarket', null)
   })
 
   it('keeps known updates during a failed check and never claims everything is current', () => {

@@ -3356,8 +3356,9 @@ export function mountMarketRoutes(
     inventory: () => {
       const installed = readInstalled(config.profile, activeProfileDir)
       const commits = readLockCommits(config.profile, activeProfileDir)
+      const runtime = dshHostInfo()
       return {
-        context: JSON.stringify([activeProfileDir, activeChannel(), config.region, marketState.githubProxy]),
+        context: JSON.stringify([activeProfileDir, activeChannel(), config.region, marketState.githubProxy, runtime?.version ?? null, [...corePackageNames(runtime?.directory ?? null)].sort()]),
         packages: Object.fromEntries(Object.entries(installed).map(([name, spec]) => [name, JSON.stringify([
           spec, readInstalledVersion(config.profile, name, activeProfileDir),
           readGitResolutionCommit(config.profile, spec, activeProfileDir),
@@ -3395,7 +3396,16 @@ export function mountMarketRoutes(
       const installed = readInstalled(config.profile, activeProfileDir)
       if (Object.keys(installed).length === 0) return { updates: {} }
       const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources, sourceMigrationFor, lookupFailed } = await updateCheckInputs()
-      const checked = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
+      const runtime = dshHostInfo()
+      const checked = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, {
+        holdYoungReleases: config.desktopHost === true, releaseSources,
+        ...(runtime?.version == null ? {} : { hostCompatibility: {
+          version: runtime.version,
+          packages: corePackageNames(runtime.directory ?? null),
+          lookupVersion: async (name, version) => (await discoveryManifests.lookup([name], routesFor(region).npmRegistry,
+            { record: false, versions: new Map([[name, version]]) }))[name] ?? null,
+        } }),
+      })
       const updates: Record<string, import('./updates.ts').UpdateStatus> = {}
       for (const [name, status] of Object.entries(checked)) {
         const sourceMigration = sourceMigrationFor.get(name)
@@ -3709,7 +3719,7 @@ export function mountMarketRoutes(
               name,
               source: status.kind,
               installedVersion: status.current ?? status.version,
-              latestVersion: status.latest,
+              latestVersion: status.compatibleVersion ?? status.latest,
             }))
           sendJson(response, 200, {
             schema: UPDATE_API_V1_SCHEMA,
@@ -3755,7 +3765,7 @@ export function mountMarketRoutes(
                 name,
                 source: update.kind,
                 installedVersion: update.current ?? update.version,
-                latestVersion: update.latest,
+                latestVersion: update.compatibleVersion ?? update.latest,
                 updateAvailable: update.updateAvailable,
                 channelSwitch: update.channelSwitch ?? null,
               },
@@ -3810,6 +3820,12 @@ export function mountMarketRoutes(
             })
             return
           }
+          // Public clients see the same actionable release as Installed. The
+          // exact pin is carried through both immediate and drain execution.
+          const compatibleTarget = async (): Promise<string | undefined> => {
+            const offered = body.force === true ? undefined : (await updateNotifications.check())[packageName]
+            return offered?.updateAvailable === true ? offered.compatibleVersion : undefined
+          }
           if (body.busyPolicy === 'drain') {
             const support = drainCoordinator.support()
             if (!support.supported) {
@@ -3824,9 +3840,11 @@ export function mountMarketRoutes(
               })
               return
             }
+            const compatibleVersion = await compatibleTarget()
             const replayBody: Record<string, unknown> = {
               name: packageName,
               ...(body.force === true ? { force: true } : {}),
+              ...(compatibleVersion === undefined ? {} : { compatVersion: compatibleVersion }),
             }
             let intent: DrainIntent
             try {
@@ -3970,10 +3988,13 @@ export function mountMarketRoutes(
           }
           const operation = operationsV1.create(packageName, installedVersion)
           operationsV1.start(operation.operationId)
-          void invokeLegacy('/dsh-market/update', request, 'POST', {
+          // The ordinary public POST acknowledges with an operation ID before
+          // network lookups, as it did before host-aware selection.
+          void compatibleTarget().then(compatibleVersion => invokeLegacy('/dsh-market/update', request, 'POST', {
             name: packageName,
             ...(body.force === true ? { force: true } : {}),
-          }).then(({ status, payload }) => {
+            ...(compatibleVersion === undefined ? {} : { compatVersion: compatibleVersion }),
+          })).then(({ status, payload }) => {
             operationsV1.finish(
               operation.operationId,
               status,
@@ -6586,7 +6607,7 @@ export function mountMarketRoutes(
             // A release the refusal dialog's own search confirmed compatible
             // (#581). Pinned below instead of resolving `latest` again —
             // which is the same release that was just refused.
-            const compatVersion = typeof body.compatVersion === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(body.compatVersion)
+            const compatVersion = isExactReleaseVersion(body.compatVersion)
               ? body.compatVersion
               : null
             const restore = body.restore === true
@@ -6707,6 +6728,14 @@ export function mountMarketRoutes(
             // reported — a colliding npm package replaced the private install.
             const { gitSpec, genericGitTarget } = gitUpdateTargets(spec)
             const isGit = gitSpec !== null || genericGitTarget !== null
+            // A queued exact compatibility target names an npm release. If
+            // the source changed to Git in the meantime, taking this branch
+            // would ignore the target and update an unrelated revision.
+            if (compatVersion !== null && (isGit || restore)) {
+              invalidateUpdates()
+              sendJson(response, 409, { staleTarget: true, error: '插件来源已变化，请刷新市场。插件没有改动。 / The plugin source changed. Refresh the market; nothing was changed.' })
+              return
+            }
             const isReleaseTarball = !restore && isGitHubReleaseTarballSpec(spec)
             let releaseUpdate: Awaited<ReturnType<typeof publishedReleaseUpdate>> = null
             if (isReleaseTarball) {
@@ -6795,6 +6824,12 @@ export function mountMarketRoutes(
             // failure with a name.
             if (usesNpmUpdateTarget) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+              const orgPin = pinnedVersion(name)
+              if (compatVersion !== null && orgPin !== undefined && compatVersion !== orgPin) {
+                invalidateUpdates()
+                sendJson(response, 409, { staleTarget: true, error: '组织指定的版本已变化，请刷新市场。插件没有改动。 / The organization has pinned a different version. Refresh the market; nothing was changed.' })
+                return
+              }
               // #991: Revalidate under the mutation lock against the CURRENT registry
               // and profile policy. The client's target is an optimistic concurrency
               // token, never an authorization to bypass pnpm's release-age window.

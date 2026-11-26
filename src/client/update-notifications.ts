@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from 'react'
 import type { UpdateNotificationSnapshot as ServerUpdateNotificationSnapshot } from '../update-notifications.ts'
 import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from '../update-notification-settings.ts'
-import { api, readSession } from './market-data.ts'
+import { api, offeredUpdateVersion, readSession } from './market-data.ts'
 
 // Older hot-loaded servers have no configurable interval. Keep their results
 // without presenting a setting they cannot save.
@@ -47,21 +47,33 @@ export function ignoredUpdatesForBoot(boot: string): string[] {
   return readIgnoredUpdates(boot, true)
 }
 
-/** The attention count excludes dismissed, disabled and already-completed updates. */
-export function notificationNames(snapshot: UpdateNotificationSnapshot): string[] {
+/** Attention and the expanded review both respect quiet rows. */
+function quietNames(snapshot: UpdateNotificationSnapshot): Set<string> {
   const restart = readSession(RESTART_SESSION_KEY)
   const updated: string[] = restart?.boot === snapshot.boot && Array.isArray(restart.updated)
     ? restart.updated.filter((name: unknown): name is string => typeof name === 'string') : []
-  const quiet = new Set([
+  return new Set([
     ...snapshot.updateExempt, ...snapshot.disabled, ...snapshot.blocked,
     // A cached sidebar snapshot can lag behind the page's newer boot. Reading
     // its count must never erase a dismissal already saved for that new boot.
     ...readIgnoredUpdates(snapshot.boot, false), ...updated,
   ])
+}
+
+/** The attention count excludes dismissed, disabled and already-completed updates. */
+export function notificationNames(snapshot: UpdateNotificationSnapshot): string[] {
+  const quiet = quietNames(snapshot)
   return Object.entries(snapshot.updates).filter(([name, status]) => !quiet.has(name)
     && status.notAPlugin !== true
     && (status.updateAvailable === true || (status.kind === 'generation' && status.latest != null)))
     .map(([name]) => name).sort()
+}
+
+/** These releases need a different host, not a badge or an update action. */
+export function hostBlockedNotificationNames(snapshot: UpdateNotificationSnapshot): string[] {
+  const quiet = quietNames(snapshot)
+  return Object.entries(snapshot.updates).filter(([name, status]) => !quiet.has(name)
+    && status.hostUpdateBlocked !== undefined && status.updateAvailable !== true).map(([name]) => name).sort()
 }
 
 interface SeenScope { key: string; persistent: boolean }
@@ -118,7 +130,7 @@ function updateFingerprint(snapshot: UpdateNotificationSnapshot, name: string): 
   const migration = status.sourceMigration
   return JSON.stringify([
     name, status.kind ?? null, status.current ?? null, status.version ?? null,
-    status.eligibleVersion ?? status.latest ?? null, status.restoreRequired === true,
+    offeredUpdateVersion(status), status.restoreRequired === true,
     migration?.kind === 'git-to-npm'
       ? [migration.kind, migration.repo, migration.target]
       : migration?.kind === 'npm-rename' ? [migration.kind, migration.from, migration.target] : null,
@@ -162,7 +174,10 @@ function isUpdateStatus(value: unknown): boolean {
   return isRecord(value)
     && ['updateAvailable', 'notAPlugin', 'restoreRequired'].every(key => value[key] === undefined || typeof value[key] === 'boolean')
     && ['current', 'latest', 'version'].every(key => value[key] === undefined || value[key] === null || typeof value[key] === 'string')
-    && ['kind', 'eligibleVersion'].every(key => value[key] === undefined || typeof value[key] === 'string')
+    && ['kind', 'eligibleVersion', 'compatibleVersion'].every(key => value[key] === undefined || typeof value[key] === 'string')
+    && (value.hostUpdateBlocked === undefined || (isRecord(value.hostUpdateBlocked)
+      && typeof value.hostUpdateBlocked.version === 'string' && typeof value.hostUpdateBlocked.hostVersion === 'string'
+      && (typeof value.hostUpdateBlocked.requirement === 'string' || value.hostUpdateBlocked.requirement === null)))
     && (value.checkError === undefined || value.checkError === 'unavailable')
     && (value.checkFailed === undefined || value.checkFailed === true)
 }

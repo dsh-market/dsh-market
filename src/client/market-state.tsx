@@ -12,7 +12,6 @@ import {
   type InstalledRepoIdentities,
   type InstalledSort,
   type InstallStamp,
-  localizeBilingual,
   type MarketStatus,
   marketUiLocale,
   pluginName,
@@ -464,10 +463,12 @@ const t = props.t
       const options = row.updateOptions !== null && typeof row.updateOptions === 'object'
         ? row.updateOptions as Record<string, unknown> : {}
       const verdict = queuedRowApplies({ kind, name, restore: options.restore === true,
+        ...(typeof options.compatVersion === 'string' ? { compatVersion: options.compatVersion } : {}),
+        ...(typeof options.compatibleVersion === 'string' ? { compatibleVersion: options.compatibleVersion } : {}),
         ...(typeof options.eligibleVersion === 'string' ? { eligibleVersion: options.eligibleVersion } : {}),
         ...(url === undefined ? {} : { url }) }, { installed, updates, plugins: data.plugins })
       if (verdict !== null) return stale(verdict === 'target-changed'
-        ? localizeBilingual('更新目标已变化，已跳过。请重新选择更新。 / The update target changed, so this task was skipped. Choose the update again.', lang)
+        ? t('updateTargetChanged')
         : verdict === 'gone' ? t('agentQueueStaleGone') : t('agentQueueStaleNoUpdate'))
       if (kind === 'install' && url === undefined) return []
       const updateOptions = kind === 'update' ? {
@@ -475,6 +476,7 @@ const t = props.t
         restore: options.restore === true,
         ...(typeof options.compatVersion === 'string' ? { compatVersion: options.compatVersion } : {}),
         ...(typeof options.eligibleVersion === 'string' ? { eligibleVersion: options.eligibleVersion } : {}),
+        ...(typeof options.compatibleVersion === 'string' ? { compatibleVersion: options.compatibleVersion } : {}),
       } : undefined
       return [{ ok: true as const, row: { kind, name, ...(url === undefined ? {} : { url }), updateOptions } }]
     })
@@ -691,7 +693,7 @@ const t = props.t
   const notesRequest = useRef<AbortController | null>(null)
   useEffect(() => () => notesRequest.current?.abort(), [])
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
-  const [staleName, setStaleName] = useState<string | null>(null)
+  const [staleUpdate, setStaleUpdate] = useState<{ name: string; exactVersion?: string; compatibleVersion?: string } | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
   const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin; verified: boolean } | null>(null)
   /** A release whose declared host requirement this host does not meet (#404). kind distinguishes the update dialog from the fresh-install dialog. */
@@ -1376,13 +1378,13 @@ const t = props.t
     setRestartNames, setRestartNoticeDismissed, setRestartReachable, setRestarting,
     setRestoreBlocked, setRestoreConfirm, setRestoreConfirmOpen, setRestoreErrors, setRollingBack,
     setShowTheirs, setShowTop, setSidebarTipDismissed, setSkins, setSortDir, setSortField,
-    setStaleName, setStartupRepair, setStuckExpanded, setSupervisor, setTab, setThemePanel,
+    setStaleUpdate, setStartupRepair, setStuckExpanded, setSupervisor, setTab, setThemePanel,
     setThemePick, setThemeSortDir, setThemeSortField, setThemeTimeRange, setThemesFullscreen,
     setTimeRange, setToggleRestart, setToggled, setTogglingName, setUpdateExemptError,
     setUpdateExemptNames, setUpdateExemptNotice, setUpdateNotes, setUpdatedNames, setUpdatingAll,
     setUpdatingName, setVersion, setVisibleCats, setWebdavNeedsPassword, setWebdavPassword,
     setWebdavSaved, setWebdavUrl, setWebdavUser, setWhyOpen, settledHostRef, showSidebarAdded, showSidebarTip,
-    showTheirs, showTop, sidebarTipError, sidebarTipSaving, skins, sortDir, sortField, staleName,
+    showTheirs, showTop, sidebarTipError, sidebarTipSaving, skins, sortDir, sortField, staleUpdate,
     startupRepair, statusRef, stuckExpanded, supervisor, surface, t, tab, themePanel, themePick,
     themeSearchReset, themeSnap, themeSortDir, themeSortField, themeTimeRange, themesFullscreen,
     timeRange, toggleRestart, toggled, toggledDone, togglingName, uiLocale, unbundledNames,
