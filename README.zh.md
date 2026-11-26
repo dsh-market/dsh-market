@@ -194,6 +194,14 @@ profile，因此不会出现在桌面端。请通过应用内的 **插件 → �
   **dsh 0.1.7 及更新版本上没有这个开关可关**：宿主改为从插件自己的 Config schema 派生设置，不再为插件注册的设置命名空间提供服务，市场在那里没有可用的控件。用下面的 profile patch，它在所有宿主上都有效。
 
   生效后 `GET /dsh-market/status` 会返回 `"restart": false`。
+- `/find-plugin` 默认会注册到聊天的斜杠菜单。想让菜单更短，可在同一个 `config:` 下写 `findPluginCommand: false`；市场自己的 AI 搜索不受影响。该项在启动时读取，改完需重启 dsh：
+
+  ```yaml
+  - id: dsh-market
+    name: dshmarket
+    config:
+      findPluginCommand: false
+  ```
 - 需要本地编译的插件（原生模块）会在 dsh 进程继承到的环境里构建——而图形界面、systemd/launchd 托管、Windows 开始菜单启动的 dsh **不会**继承你终端的环境。如果插件需要的编译器比机器默认的新（比如系统 `g++` 太老，但其它工作又依赖这个版本，不能全局升级），就用 `config:` 下的 `buildEnv` 固定编译期环境变量——相当于在终端里 `CC=... CXX=... dsh`，且不动任何全局配置。固定的值可以覆盖继承来的环境变量，但绝不会覆盖市场为子进程算好的 `PATH` 和 `CI`（issue #336）：
 
   ```yaml

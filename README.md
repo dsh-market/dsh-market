@@ -203,6 +203,14 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
   **On dsh 0.1.7 and newer there is no switch to flip**: the host derives a plugin's settings from its own Config schema and no longer serves a plugin-registered settings namespace, so the market has no control there. The profile patch below is the way on every host.
 
   `GET /dsh-market/status` reports `"restart": false` once it has taken effect.
+- `/find-plugin` is registered in the chat's slash menu by default. To keep the menu short, set `findPluginCommand: false` under the same `config:`; the market's own AI search keeps working. It is read at startup, so restart dsh after changing it:
+
+  ```yaml
+  - id: dsh-market
+    name: dshmarket
+    config:
+      findPluginCommand: false
+  ```
 - Plugins that compile (native modules) build under the environment the dsh process inherited — which a GUI, a systemd/launchd unit, or a Windows Start-menu launch does **not** inherit from your shell. If a plugin needs a newer compiler than the machine's default (`g++` too old while other work depends on that version), pin the build-time variables with `buildEnv` under `config:` — the config equivalent of `CC=... CXX=... dsh` from a terminal, without changing anything globally. Pinned values may override inherited ones but never the `PATH` or `CI` the market computes for its children (issue #336):
 
   ```yaml

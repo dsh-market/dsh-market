@@ -26,7 +26,7 @@ describe('the plugin Config schema (#1144)', () => {
     // dsh-settings accepts a Config only when `'toJSON' in schema`, then
     // rebuilds it before deciding which fields are editable.
     expect(typeof Config.toJSON).toBe('function')
-    expect(Object.keys(rebuilt().dict ?? {}).sort()).toEqual(['allowRestart', 'buildEnv', 'channel', 'maxSnapshots', 'profile', 'region'])
+    expect(Object.keys(rebuilt().dict ?? {}).sort()).toEqual(['allowRestart', 'buildEnv', 'channel', 'findPluginCommand', 'maxSnapshots', 'profile', 'region'])
   })
 
   it('marks exactly the two fields the form may edit as volatile', () => {
