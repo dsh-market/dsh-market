@@ -15,35 +15,41 @@
  *   build is running afterwards without a restart (the fixture's liveness
  *   marker names the running version), and an install that fails leaves the
  *   old version running, with a message that says so.
- * - dsh 0.2.1 (no `updateBundle`): the same user-visible result through the
- *   remove-then-install pair, which the market still owns.
+ * - From 0.2.1-alpha.3 the market can remove and reinstall a plugin live.
+ * - From 0.1.6-alpha.2 the manager can replace a build for the next start.
+ * - Earlier hosts have no manager: the market directs users to Settings.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, dshCommand, launchMarketScaffold } from './scaffold.ts'
+import { compareVersions } from '../../src/updates.ts'
+import { dshHostVersion } from './market-build.ts'
+import { dshAvailable, launchMarketScaffold } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 const HAS_DSH = dshAvailable()
 const A = 'dshm-e2e-fixture-a'
 
-/** Whether the host under test ships `updateBundle` (dsh 0.2.2 and later). */
-function hostHasUpdateBundle(): boolean {
-  const command = dshCommand()
-  if (command === null) return false
-  const probe = spawnSync(`${command} --version`, { shell: true, encoding: 'utf8', timeout: 60_000 })
-  const match = /(\d+)\.(\d+)\.(\d+)/.exec(`${probe.stdout}`)
-  if (match === null) return false
-  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])]
-  return major > 0 || minor > 2 || (minor === 2 && patch >= 2)
+/** Choose the expected contract independently of the operation being tested. */
+function desktopUpdateMode(): 'settings' | 'restart' | 'reinstall' | 'in-place' {
+  const version = dshHostVersion()
+  if (version === null) throw new Error('could not read the DSH host version')
+  const before = (first: string): boolean => {
+    const order = compareVersions(version, first)
+    if (order === null) throw new Error(`unrecognised DSH version: ${version}`)
+    return order < 0
+  }
+  if (before('0.1.6-alpha.2')) return 'settings'
+  if (before('0.2.1-alpha.3')) return 'restart'
+  if (before('0.2.2-alpha.2')) return 'reinstall'
+  return 'in-place'
 }
+const mode = HAS_DSH ? desktopUpdateMode() : null
 
 describe.skipIf(!HAS_DSH).sequential('web e2e: the official desktop branch drives the real plugin manager', () => {
   let scaffold: WebScaffold
   let base: string
-  const inPlace = HAS_DSH && hostHasUpdateBundle()
 
   beforeAll(async () => {
     scaffold = await launchMarketScaffold({
@@ -107,29 +113,39 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the official desktop branch drive
     return existsSync(file) ? readFileSync(file, 'utf8') : ''
   }
 
-  it('takes the official branch and installs through the manager', async () => {
+  it('installs through the desktop manager or directs the user to Settings when it is absent', async () => {
     const status = await (await scaffold.api('/dsh-market/status')).json() as { desktopHost?: boolean }
     expect(status.desktopHost).toBe(true)
     const response = await post('/dsh-market/install', { url: `https://github.com/dshm-e2e/${A}` })
-    expect(response.status, await response.clone().text()).toBe(200)
+    const body = await response.text()
+    if (mode === 'settings') {
+      expect(response.status, body).toBe(502)
+      expect(JSON.parse(body)).toMatchObject({ ok: false, exitCode: 127, stderr: expect.stringContaining('Settings → Plugins') })
+      await settle()
+      expect(diskVersion()).toBeNull()
+      expect(runningVersion()).toBeNull()
+      expect(JSON.parse(readFileSync(join(profile(), 'package.json'), 'utf8')).dependencies).not.toHaveProperty(A)
+      return
+    }
+    expect(response.status, body).toBe(200)
     await settle()
     expect(diskVersion()).toBe('1.0.0')
     expect(await waitFor(runningVersion, value => value !== null, 'the plugin starting')).toBe('1.0.0')
     // The host mounted it; the market must not mount a second copy beside it
     // (its own hot mount is only for hosts that do not replay installs).
-    if (inPlace) {
+    if (mode === 'in-place') {
       const log = await marketLog()
       expect(log).toContain('adopted instead of mounting a second copy')
       expect(log).not.toMatch(/hot.?mount(ed)? (failed|retained)/i)
     }
   })
 
-  it('updates in place: one manager call, the new build is running without a restart', async () => {
+  it.skipIf(mode === 'settings')('updates the installed version and activates it live on hosts that support it', async () => {
     scaffold.publish(A, '1.1.0')
     const response = await post('/dsh-market/update', { name: A })
     const body = await response.text()
     expect(response.status, body).toBe(200)
-    if (inPlace) {
+    if (mode === 'in-place') {
       // The host swapped the build into the running process, so the market
       // must not tell the user a restart is needed (it used to, and kept
       // saying so on every later page load).
@@ -138,16 +154,17 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the official desktop branch drive
     }
     await settle()
     expect(diskVersion()).toBe('1.1.0')
-    // Ground truth, not the market's own inference: the module the host is
-    // serving is the new one.
-    expect(await waitFor(runningVersion, value => value === '1.1.0', 'the new build running')).toBe('1.1.0')
     expect(journal(), 'a settled update leaves nothing for the next start to repair').not.toContain(A)
     const log = await marketLog()
-    if (inPlace) expect(log).toContain(`${A} 1.0.0 -> 1.1.0: asking the host to update it in place`)
+    if (mode === 'in-place') expect(log).toContain(`${A} 1.0.0 -> 1.1.0: asking the host to update it in place`)
     else expect(log).not.toContain('asking the host to update it in place')
+    // Ground truth, not the market's own inference: the module the host is
+    // serving changes immediately only on hosts that can replace it live.
+    const expected = mode === 'restart' ? '1.0.0' : '1.1.0'
+    expect(await waitFor(runningVersion, value => value === expected, 'the running build')).toBe(expected)
   })
 
-  it('keeps a plugin the user switched off OFF through the update, and runs the new build when it is switched on', async () => {
+  it.skipIf(mode === 'settings')('keeps a plugin switched off through an update and loads it when switched on', async () => {
     // The market's own switch (patch rows + its state file) and the host's
     // swap both act on the same plugin: if the host's reinstall brought the
     // old rows back, the plugin would come up on its own after an update.
@@ -165,23 +182,29 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the official desktop branch drive
     await new Promise(resolve => setTimeout(resolve, 1500))
     expect(runningVersion(), 'an update must not switch a plugin back on').toBeNull()
     await toggle(true)
-    expect(await waitFor(runningVersion, value => value === '1.1.5', 'the new build starting')).toBe('1.1.5')
+    const expected = mode === 'restart' ? '1.0.0' : '1.1.5'
+    expect(await waitFor(runningVersion, value => value === expected, 'the enabled build starting')).toBe(expected)
   })
 
-  it('puts the old version back, and says so, when the new one cannot start', async () => {
+  it.skipIf(mode === 'settings')('puts the old version back, and says so, when the new one cannot start', async () => {
     scaffold.publish(A, '1.2.0')
     const response = await post('/dsh-market/update', { name: A })
     const body = await response.text()
     expect(response.status, body).toBeGreaterThanOrEqual(400)
     await settle()
-    // Whatever the path, the user is left with the version they had, running.
-    expect(diskVersion()).toBe('1.1.5')
-    expect(await waitFor(runningVersion, value => value === '1.1.5', 'the old build running again')).toBe('1.1.5')
+    // Two valid updates may still be waiting for a restart. A failed third
+    // update must restore the last build on disk, even in that state.
+    expect(diskVersion(), body).toBe('1.1.5')
     expect(journal()).not.toContain('"to": "1.2.0"')
+    if (mode === 'restart') {
+      expect(runningVersion()).toBe('1.0.0')
+      await scaffold.restart()
+    }
+    expect(await waitFor(runningVersion, value => value === '1.1.5', 'the old build running again')).toBe('1.1.5')
     // A failure with only a code is not a message (AGENTS.md): it names what
     // happened, and it does not blame a profile that was put back.
     expect(body).not.toMatch(/^\{"code"/)
-    if (inPlace) {
+    if (mode === 'in-place') {
       expect(await marketLog()).toContain(`${A}: the host answered at step install`)
       // What happened (it did not start), what became of the old version, in
       // the words the user reads — not a code and not a stack.
@@ -222,7 +245,6 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
   const diskVersion = (): string => (JSON.parse(readFileSync(
     join(scaffold.home, 'profiles', 'web', 'node_modules', 'dshmarket', 'package.json'), 'utf8',
   )) as { version: string }).version
-  const inPlace = hostHasUpdateBundle()
   const marketLog = async (): Promise<string> => (await scaffold.api('/dsh-market/logs')).text()
   const journal = (): string => {
     const file = join(scaffold.home, 'profiles', 'web', '.dsh-market', 'pending-updates.json')
@@ -238,28 +260,35 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
     return last
   }
 
-  it('swaps its own server half through the host, answers the request that asked, and keeps serving', async () => {
+  it('updates through the host when supported and keeps serving', async () => {
     const before = await status()
     expect(before).toMatchObject({ desktopHost: true, selfManaged: true, version: current })
     scaffold.publish('dshmarket', next)
     const response = await post('/dsh-market/update', { name: 'dshmarket' })
     const body = await response.text()
-    if (!inPlace) {
-      // 0.2.1 has no in-place update, and removing the market from inside
-      // itself would unload the code that was going to install the new one
-      // (#900). With no launcher pnpm on a plain host the market says so,
-      // and names the way out; on the Electron app the launcher's pnpm does it.
-      expect(response.status).toBe(502)
-      expect(JSON.parse(body)).toMatchObject({ ok: false, failureCode: 'market-self-update' })
+    if (mode === 'settings' || mode === 'reinstall') {
+      // Without a manager all writes go to Settings. A remove-then-install
+      // manager can update other plugins, but removing the market would
+      // unload the installer itself (#900). Plain hosts lack the launcher
+      // pnpm that handles this case in Electron.
+      expect(response.status, body).toBe(502)
+      expect(JSON.parse(body)).toMatchObject(mode === 'settings'
+        ? { ok: false, exitCode: 127, stderr: expect.stringContaining('Settings → Plugins') }
+        : { ok: false, failureCode: 'market-self-update' })
+      expect(diskVersion()).toBe(current)
+      expect((await status()).version).toBe(current)
       return
     }
-    // The request that asked is answered by an instance the host has already
-    // replaced; it must still be an answer, not a 500.
     expect(response.status, body).toBe(200)
     const reply = JSON.parse(body) as { ok?: boolean; selfSwapped?: boolean; activation?: Record<string, { state: string }> }
     expect(reply.ok).toBe(true)
     expect(diskVersion()).toBe(next)
-    if (inPlace) {
+    if (mode === 'restart') {
+      expect((await status()).version).toBe(current)
+      await scaffold.restart()
+      expect((await status()).version).toBe(next)
+    } else {
+      // The instance that answered this request has already been replaced.
       expect(reply.selfSwapped).toBe(true)
       // The new SERVER half is the one answering: its `version` is read from
       // the package.json it was loaded beside, so only a re-evaluated module
@@ -275,8 +304,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
     }
   })
 
-  it('does not wedge later operations: the new instance is idle and installs a plugin', async () => {
-    if (!inPlace) return
+  it.skipIf(mode === 'settings' || mode === 'reinstall')('does not wedge later operations: the new instance is idle and installs a plugin', async () => {
     const idle = await waitFor(async () => status(), value => (value as { busy?: boolean }).busy !== true, 'the new instance going idle')
     expect(idle).toMatchObject({ busy: false })
     const installed = await post('/dsh-market/install', { url: 'https://github.com/dshm-e2e/dshm-e2e-fixture-a' })
