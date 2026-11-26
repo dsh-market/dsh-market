@@ -11793,6 +11793,45 @@ describe('recently added Discover row (#780)', () => {
     }
   })
 
+  it('turns the recent strip page every 10s, pauses on hover and focus, wraps at the end', async () => {
+    const protoDesc = (key: string) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)
+    const saved = ['scrollWidth', 'clientWidth', 'scrollLeft', 'scrollBy', 'scrollTo'].map(key => [key, protoDesc(key)] as const)
+    const calls: string[] = []
+    let left = 0
+    const isRow = (el: HTMLElement) => el.id === 'dshm-recent-grid'
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get(this: HTMLElement) { return isRow(this) ? 1200 : 0 } })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get(this: HTMLElement) { return isRow(this) ? 600 : 0 } })
+    Object.defineProperty(HTMLElement.prototype, 'scrollLeft', { configurable: true, get(this: HTMLElement) { return isRow(this) ? left : 0 }, set() {} })
+    Object.defineProperty(HTMLElement.prototype, 'scrollBy', { configurable: true, value(this: HTMLElement, o: { left: number }) { calls.push(`by${String(o.left)}`); left = Math.min(600, left + o.left) } })
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value(this: HTMLElement, o: { left: number }) { calls.push(`to${String(o.left)}`); left = o.left } })
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      stubFetch({ '/dsh-market/registry': registry() })
+      render(<MarketSection {...props()} />)
+      const row = (await screen.findByRole('region', { name: en.recentlyAdded })).querySelector<HTMLElement>('#dshm-recent-grid')!
+      const tick = () => act(() => { vi.advanceTimersByTime(10_000) })
+      tick(); expect(calls).toEqual(['by510'])
+      tick(); expect(calls).toEqual(['by510', 'by510']) // reaches the end (left = 600)
+      tick(); expect(calls.at(-1)).toBe('to0') // wraps to the start
+      calls.length = 0
+      fireEvent.mouseEnter(row); tick(); tick(); expect(calls).toEqual([])
+      fireEvent.mouseLeave(row); tick(); expect(calls).toHaveLength(1)
+      calls.length = 0
+      fireEvent.focusIn(row); tick(); expect(calls).toEqual([])
+      fireEvent.focusOut(row); tick(); expect(calls).toHaveLength(1)
+      calls.length = 0
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+      tick(); expect(calls).toEqual([])
+    } finally {
+      Reflect.deleteProperty(document, 'hidden')
+      vi.useRealTimers()
+      for (const [key, desc] of saved) {
+        if (desc) Object.defineProperty(HTMLElement.prototype, key, desc)
+        else Reflect.deleteProperty(HTMLElement.prototype, key)
+      }
+    }
+  })
+
   it('checks only the expanded recent strip and leaves incompatible tiles unfilled (#1162)', async () => {
     const top = Array.from({ length: 24 }, (_, i) => entry('dsh-top-' + i, 1000 - i, 0, daysAgo(40)))
     const arrivals = Array.from({ length: 10 }, (_, i) => entry('dsh-arrival-' + i, 10 - i, 0))
