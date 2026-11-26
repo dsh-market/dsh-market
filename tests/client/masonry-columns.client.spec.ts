@@ -37,6 +37,36 @@ describe('balanceColumns', () => {
     expect(placed).toHaveLength(heights.length)
     expect(placed.slice(0, 3)).toEqual([0, 1, 2])
   })
+  it.each([
+    { name: 'all zero', heights: [0, 0, 0, 0], columns: 2 },
+    { name: 'partially zero', heights: [100, 0, 120, 90], columns: 2 },
+    { name: 'NaN', heights: [100, Number.NaN, 120, 90], columns: 2 },
+    { name: 'negative', heights: [100, -1, 120, 90], columns: 2 },
+    { name: 'infinite', heights: [100, Infinity, 120, 90], columns: 2 },
+    { name: 'three columns', heights: [0, 0, 0, 0, 0, 0, 0], columns: 3 },
+  ])('retains ranked placement when card measurements are incomplete ($name)', ({ heights: unmeasured, columns }) => {
+    expect(balanceColumns(unmeasured, columns)).toEqual(unmeasured.map((_h, index) => index % columns))
+  })
+  it.each([
+    [[100, 100, 100, 100], 2, [0, 1, 0, 1]],
+    [[100, 100, 20, 90], 2, [0, 1, 0, 1]],
+    [[100, 100, 100, 100], 3, [0, 1, 2, 0]],
+    [[100, 100], 3, [0, 1]],
+  ] as const)('retains the rank-friendly deal when balancing cannot improve the greedy spread (%j, %i columns)', (measured, columns, expected) => {
+    expect(balanceColumns(measured, columns)).toEqual(expected)
+  })
+  it('still improves the greedy spread for genuinely unequal measured heights', () => {
+    const measured = [90, 80, 70, 60, 50]
+    const depth = [0, 0]
+    balanceColumns(measured, 2).forEach((column, i) => { depth[column]! += measured[i]! + 10 })
+    // Greedy shortest-column placement finishes at depths 230 and 170.
+    expect(Math.abs(depth[0]! - depth[1]!)).toBeLessThan(60)
+  })
+  it('prefers earlier greedy ranks when equally good improvements are available', () => {
+    // Greedy spread is 50. Both [0,0,1,1] and its mirror [1,1,0,0]
+    // reduce it to 10, but the former keeps the first card on the left.
+    expect(balanceColumns([100, 120, 150, 80], 2)).toEqual([0, 0, 1, 1])
+  })
   it('copes with fewer cards than columns and with one column', () => {
     expect(balanceColumns([100], 3)).toHaveLength(1)
     expect(balanceColumns([], 2)).toEqual([])
