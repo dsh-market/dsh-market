@@ -41,6 +41,8 @@ type MarketGoneNoticeCtx = { props: MarketSectionProps }
  * hover (or never, on macOS) does not say so. Two arrows in the section head
  * do: each one is there only while there is more to see in its direction.
  */
+const RECENT_AUTOPLAY_MS = 10_000
+
 function RecentArrows({ rowRef, t }: { rowRef: RefObject<HTMLDivElement | null>; t: (key: 'recentPrev' | 'recentNext') => string }) {
   const [edges, setEdges] = useState({ left: false, right: false })
   useEffect(() => {
@@ -56,10 +58,43 @@ function RecentArrows({ rowRef, t }: { rowRef: RefObject<HTMLDivElement | null>;
     observer?.observe(row)
     return () => { row.removeEventListener('scroll', measure); observer?.disconnect() }
   }, [rowRef])
+  // Turns the page by itself every RECENT_AUTOPLAY_MS so every new plugin (and
+  // the sponsored one up front) gets seen; at the end it goes back to the
+  // start. Stops while the pointer or focus is in the strip, while the tab is
+  // hidden, and for people who asked for less motion. Using the arrows
+  // restarts the wait, so a click is never followed by an instant second turn.
+  const [round, setRound] = useState(0)
+  useEffect(() => {
+    const row = rowRef.current
+    if (row === null) return
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    let held = false
+    const hold = () => { held = true }
+    const release = () => { held = row.matches(':hover') || row.contains(document.activeElement) }
+    row.addEventListener('mouseenter', hold)
+    row.addEventListener('mouseleave', release)
+    row.addEventListener('focusin', hold)
+    row.addEventListener('focusout', release)
+    const timer = setInterval(() => {
+      if (held || document.hidden) return
+      const max = row.scrollWidth - row.clientWidth
+      if (max <= 2) return
+      if (row.scrollLeft >= max - 2) row.scrollTo({ left: 0, behavior: 'smooth' })
+      else row.scrollBy({ left: row.clientWidth * 0.85, behavior: 'smooth' })
+    }, RECENT_AUTOPLAY_MS)
+    return () => {
+      clearInterval(timer)
+      row.removeEventListener('mouseenter', hold)
+      row.removeEventListener('mouseleave', release)
+      row.removeEventListener('focusin', hold)
+      row.removeEventListener('focusout', release)
+    }
+  }, [rowRef, round])
   if (!edges.left && !edges.right) return null
   const page = (direction: 1 | -1) => {
     const row = rowRef.current
     if (row === null) return
+    setRound(value => value + 1)
     row.scrollBy({ left: direction * row.clientWidth * 0.85, behavior: 'smooth' })
   }
   return (
