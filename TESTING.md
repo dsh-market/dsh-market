@@ -64,11 +64,14 @@ instead of a pnpm the market spawns. `selfVersions: [a, b]` installs the market
 itself from the fixture registry at `a` and publishes `b`, which is how a spec
 updates the market from inside itself.
 
-`tests/web/desktop-update.e2e.ts` uses both, and asserts different things by
-host: on dsh 0.2.2+ (has `updateBundle`) an update is one manager call and the
-fixture's liveness marker names the NEW version without a restart; on 0.2.1 the
-same user-visible result comes from the remove-then-install pair. Run it
-against each line you support (`DSHM_E2E_DSH=<dsh bin>`).
+`tests/web/desktop-update.e2e.ts` checks the contract of the selected host.
+Without a plugin manager, the Desktop install must leave the profile intact.
+On hosts that overwrite an installed bundle and request a restart, the spec
+checks the version on disk and the version running before and after restarting
+the same profile. On hosts that support a live update, the fixture must report
+the new version in the same process, whether the market uses remove-then-install
+or the host's `updateBundle` method. Run the spec against one host with
+`DSHM_E2E_DSH=<dsh bin> npm run test:web -- tests/web/desktop-update.e2e.ts`.
 
 ## The one check no lane can run: provisioning pnpm
 

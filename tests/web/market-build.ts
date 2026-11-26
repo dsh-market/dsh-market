@@ -14,16 +14,24 @@ import type { WebScaffold } from './scaffold.ts'
 
 const execAsync = promisify(exec)
 
-/** First published DSH HMR with both runExclusive and reconcileProfile. */
-export function hostCanSwap(): boolean {
+/** Read the CLI version independently of the market operation under test. */
+export function dshHostVersion(): string | null {
   const command = dshCommand()
-  if (command === null) return false
+  if (command === null) return null
   const probe = spawnSync(command, ['--version'], {
     shell: true, encoding: 'utf8', timeout: 30_000, cwd: process.env.DSHM_E2E_DSH_CWD,
   })
   const version = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/.exec(`${probe.stdout ?? ''}\n${probe.stderr ?? ''}`)?.[0]
-  const comparison = version === undefined ? null : compareVersions(version, '0.2.1-alpha.3')
-  if (probe.status !== 0 || comparison === null) throw new Error('could not read the DSH host version for self-reload tests')
+  if (probe.status !== 0 || version === undefined) throw new Error('could not read the DSH host version')
+  return version
+}
+
+/** First published DSH HMR with both runExclusive and reconcileProfile. */
+export function hostCanSwap(): boolean {
+  const version = dshHostVersion()
+  if (version === null) return false
+  const comparison = compareVersions(version, '0.2.1-alpha.3')
+  if (comparison === null) throw new Error(`unrecognised DSH version: ${version}`)
   return comparison >= 0
 }
 

@@ -12,7 +12,7 @@
 import { exec, execSync, spawn, spawnSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -647,7 +647,10 @@ async function freePort(): Promise<number> {
 export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promise<WebScaffold> {
   const command = dshCommand()
   if (command === null) throw new Error('no dsh available — set DSHM_E2E_DSH')
-  const home = mkdtempSync(join(tmpdir(), 'dshm-e2e-home-'))
+  // Windows TEMP can contain an 8.3 alias (RUNNER~1). pnpm expands it when
+  // finding the workspace root. Give DSH the same spelling so pnpm records
+  // this profile's dependencies under the root importer (.) for rollback.
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'dshm-e2e-home-')))
   let env: NodeJS.ProcessEnv = { ...process.env, DSH_HOME: home, CI: 'true' }
 
   // prepack builds lib/ + client and runs the preflight guard. The market's
