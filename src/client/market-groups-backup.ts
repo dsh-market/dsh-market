@@ -91,7 +91,7 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
   dataRef.current = data
   const doInstallRef = useRef<((plugin: RegistryPlugin) => void) | null>(null)
   doInstallRef.current = doInstall
-  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string, confirmAgentsRunning?: boolean, eligibleVersion?: string) => Promise<void>) | null>(null)
+  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string, confirmAgentsRunning?: boolean, eligibleVersion?: string, preferReject?: boolean, selectedCompatibleVersion?: string | null) => Promise<void>) | null>(null)
   doUpdateRef.current = doUpdate
   const doUninstallRef = useRef<((name: string) => Promise<void>) | null>(null)
   doUninstallRef.current = doUninstall
@@ -183,7 +183,7 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
               const plugin = dataRef.current?.plugins.find(candidate => candidate.url === task.url)
               if (plugin !== undefined) doInstallRef.current?.(plugin)
             } else if (task.kind === 'update') {
-              void doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion, false, task.updateOptions?.eligibleVersion)
+              void doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion, false, task.updateOptions?.eligibleVersion, false, task.updateOptions?.compatibleVersion ?? null)
             } else {
               void doUninstallRef.current?.(task.name)
             }
@@ -236,7 +236,7 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
       doInstall(plugin)
     } else if (record.kind === 'update') {
       setRecords(prev => drop(prev, record.id))
-      void doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning, record.updateOptions?.eligibleVersion)
+      void doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning, record.updateOptions?.eligibleVersion, false, record.updateOptions?.compatibleVersion ?? null)
     } else {
       setRecords(prev => drop(prev, record.id))
       void doUninstall(record.name, confirmAgentsRunning)
@@ -519,7 +519,7 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
   }, [bootId])
 
   const doUpdateAll = useCallback(() => {
-    const names = reminderBatchUpdatableNames.map(name => ({ name, eligibleVersion: updates[name]?.eligibleVersion }))
+    const names = reminderBatchUpdatableNames.map(name => ({ name, eligibleVersion: updates[name]?.eligibleVersion, compatibleVersion: updates[name]?.compatibleVersion }))
     setUpdatingAll(true)
     const next = () => {
       // The first refusal for a profile-wide wait ends the batch (#1252): the
@@ -545,7 +545,7 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
         refreshInstalled(true)
         return
       }
-      doUpdate(item.name, false, false, undefined, false, item.eligibleVersion).then(next, next)
+      doUpdate(item.name, false, false, undefined, false, item.eligibleVersion, false, item.compatibleVersion ?? null).then(next, next)
     }
     next()
   }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled, updates, t, nextRecordId])

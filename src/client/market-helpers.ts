@@ -101,6 +101,10 @@ function isUpdateStatus(value: unknown): value is UpdateStatus {
     && (status.version === undefined || status.version === null || typeof status.version === 'string')
     && (status.latest === undefined || status.latest === null || typeof status.latest === 'string')
     && (status.current === undefined || status.current === null || typeof status.current === 'string')
+    && (status.compatibleVersion === undefined || typeof status.compatibleVersion === 'string')
+    && (status.hostUpdateBlocked === undefined || (status.hostUpdateBlocked !== null
+      && typeof status.hostUpdateBlocked.version === 'string' && typeof status.hostUpdateBlocked.hostVersion === 'string'
+      && (typeof status.hostUpdateBlocked.requirement === 'string' || status.hostUpdateBlocked.requirement === null)))
 }
 
 export function readUpdateStatuses(body: unknown): Record<string, UpdateStatus> {

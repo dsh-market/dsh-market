@@ -14,11 +14,13 @@ import { inProbe } from './probe-context.ts'
 import { marketFetch } from './net.ts'
 import { registryFor } from './npmrc.ts'
 import { pinnedVersion } from './policy.ts'
+import { deriveHostCompatibility, manifestFacts, type NpmManifestFacts } from './discovery-compatibility.ts'
+import { isRegistryRangeSpec } from './source-migration.ts'
 import { publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy, type Region } from './regions.ts'
 import type { GitToNpmMigration, NpmRenameMigration } from './source-migration.ts'
 import { isNumericReleaseAgeWindow, readMinimumReleaseAgeMs } from './install.ts'
-import { isStableReleaseVersion, selectMatureUpdate, versionMaturity, type MatureUpdateSelection, type NpmPackument } from './release-candidates.ts'
+import { isExactReleaseVersion, isStableReleaseVersion, selectMatureUpdate, versionMaturity, type MatureUpdateSelection, type NpmPackument } from './release-candidates.ts'
 import { hasDshManifest, profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits, readProfileBundles } from './profile.ts'
 import { userPatchPackageReferences } from './patch.ts'
 import { activeReleaseBlockers, headlineBlocker } from './release-blockers.ts'
@@ -47,6 +49,10 @@ export interface UpdateStatus {
   checkFailed?: true
   /** Exact mature npm stable target for Desktop; `latest` remains the registry tag. */
   eligibleVersion?: string
+  /** Exact older release confirmed to support the running host. */
+  compatibleVersion?: string
+  /** The offered release requires a different host; no eligible compatible upgrade is known. */
+  hostUpdateBlocked?: { version: string; requirement: string | null; hostVersion: string }
   /**
    * HEAD of the chosen line for a floating git install whose repository has
    * moved without publishing: newer commits exist (current ≠ latest) but the
@@ -124,6 +130,42 @@ export interface UpdateStatus {
    * channel the user had just left.
    */
   channelSwitch?: string
+}
+
+/** Compatibility facts for the running host, not the installed plugin. */
+export interface UpdateHostCompatibility {
+  version: string
+  packages: ReadonlySet<string>
+  lookupVersion(name: string, version: string): Promise<NpmManifestFacts | null>
+}
+
+/**
+ * Search a verified package history only after the ordinary update target has
+ * been proved incompatible. An unknown history is not the same as no match.
+ * Cap the search at the target already selected by release-age/channel policy;
+ * it must never turn an update into a downgrade or leave that release line.
+ */
+export function compatibleUpdateInHistory(
+  packument: NpmPackument, name: string, installed: string, target: string,
+  registryLatest: string | null, host: Pick<UpdateHostCompatibility, 'version' | 'packages'>,
+  stableOnly: boolean, maturity?: Parameters<typeof versionMaturity>[3], now = Date.now(),
+): string | null | undefined {
+  const versions = packument?.versions
+  if (versions === null || typeof versions !== 'object' || Array.isArray(versions)
+    || !Object.hasOwn(versions, target)
+    || (registryLatest !== null && packument['dist-tags']?.latest !== registryLatest)) return undefined
+  let best: string | null = null
+  for (const [version, manifest] of Object.entries(versions)) {
+    if (!isExactReleaseVersion(version) || !isUpgrade(installed, version) || !isUpgrade(version, target)
+      || (stableOnly && !isStableReleaseVersion(version))) continue
+    const declaredName = (manifest as { name?: unknown } | null)?.name
+    const facts = manifestFacts(manifest)
+    if ((declaredName !== undefined && declaredName !== name) || (facts.version !== null && facts.version !== version)) continue
+    if (maturity !== undefined && !versionMaturity(packument, version, now, maturity).mature) continue
+    if (deriveHostCompatibility(facts, host.version, host.packages).status === 'compatible'
+      && (best === null || isUpgrade(best, version))) best = version
+  }
+  return best
 }
 
 /**
@@ -912,11 +954,12 @@ export async function checkUpdates(
    * with `--config.minimum-release-age=0` and CAN install a young release.
    * Hiding those on the CLI would suppress updates that work.
    */
-  options: { holdYoungReleases?: boolean; releaseSources?: ReadonlyMap<string, CatalogReleaseSource> } = {},
+  options: { holdYoungReleases?: boolean; releaseSources?: ReadonlyMap<string, CatalogReleaseSource>; hostCompatibility?: UpdateHostCompatibility } = {},
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
   const installed = readInstalled(profile, activeProfileDir)
   const lockCommits = readLockCommits(profile, activeProfileDir)
+  const composed = new Set(readProfileBundles(activeProfileDir))
   const installedIdentity = JSON.stringify(Object.entries(installed).sort(([a], [b]) => a.localeCompare(b))
     .map(([name, spec]) => [name, spec, readInstalledVersion(profile, name, activeProfileDir), readGitResolutionCommit(profile, spec, activeProfileDir)]))
   // The channel is part of the key: switching to betas has to change the
@@ -924,6 +967,7 @@ export async function checkUpdates(
   // the stable verdict for the rest of the TTL — reading as "the setting did
   // nothing".
   const cacheKey = `${activeProfileDir}\u0000${options.holdYoungReleases === true ? 'hold' : 'any'}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${options.holdYoungReleases === true ? profilePolicyFingerprint(activeProfileDir) : ''}` + JSON.stringify([...(options.releaseSources ?? [])]) + installedIdentity + JSON.stringify([...lockCommits].sort())
+    + JSON.stringify(options.hostCompatibility === undefined ? null : [options.hostCompatibility.version, [...options.hostCompatibility.packages].sort()])
   if (!force && updatesCache?.key === cacheKey && Date.now() < updatesCache.recheckAt) {
     return updatesCache.data
   }
@@ -1120,6 +1164,46 @@ export async function checkUpdates(
           ...(newerPrerelease === null ? {} : { newerPrerelease }),
           ...(sideways ? { channelSwitch: latest } : {}),
         }
+        // A registry update that is known to fail the click-time host guard
+        // is not actionable (#1307). Leave unknown facts alone, as the guard
+        // does. The market's own channel-following update is exempt there too.
+        const host = options.hostCompatibility
+        const status = result[name]!
+        const target = status.eligibleVersion ?? status.latest
+        if (host !== undefined && !channelFor.has(name) && status.updateAvailable
+          && isRegistryRangeSpec(spec) && version !== null && target !== null
+          && isUpdatablePlugin(activeProfileDir, name, composed)) {
+          try {
+            const facts = target === registryStable
+              ? manifestFacts(meta)
+              : await host.lookupVersion(name, target)
+            // Do not judge an aliased or stale response as the selected release.
+            const returnedName = target === registryStable ? (meta as { name?: unknown } | null | undefined)?.name : undefined
+            if (facts?.version !== target || (returnedName !== undefined && returnedName !== name)) return
+            const verdict = deriveHostCompatibility(facts, host.version, host.packages)
+            if (verdict.status !== 'incompatible') return
+            let compatible: string | null | undefined = null
+            if (pin === undefined) {
+              // On Desktop, every replacement candidate must also satisfy the
+              // current wait, with the same exclusions and timestamps.
+              const windowMs = options.holdYoungReleases === true ? readMinimumReleaseAgeMs(profile, activeProfileDir) : null
+              const policy = options.holdYoungReleases === true ? readReleaseAgeExclusions(activeProfileDir, name) : null
+              if (options.holdYoungReleases === true && (windowMs === null || policy?.kind !== 'supported')) return
+              const maturity = windowMs !== null && policy?.kind === 'supported'
+                ? { minimumReleaseAgeMs: windowMs, ...policy.exclusions } : undefined
+              const history = await fetchJson(npmUrl(encodeURIComponent(name))) as NpmPackument
+              compatible = compatibleUpdateInHistory(history, name, version, target, registryStable, host,
+                isStableReleaseVersion(version) && isStableReleaseVersion(target), maturity)
+            }
+            // A missing history does not establish that no compatible version
+            // exists. Retain the existing click-time behaviour in that case.
+            if (compatible === undefined) return
+            const { eligibleVersion: _matureTarget, ...rest } = status
+            result[name] = compatible === null
+              ? { ...rest, updateAvailable: false, hostUpdateBlocked: { version: target, requirement: verdict.requirement, hostVersion: host.version } }
+              : { ...rest, compatibleVersion: compatible }
+          } catch { /* A failed advisory lookup must not turn an offer into a false "current". */ }
+        }
       }
     } catch {
       result[name] = {
@@ -1131,7 +1215,6 @@ export async function checkUpdates(
   // A plain dependency can have a newer release; it is just not an update the
   // market can apply (#793). Judged once, after every branch above has said
   // what it found, so no source kind (npm, github, git host) can slip past.
-  const composed = new Set(readProfileBundles(activeProfileDir))
   for (const [name, status] of Object.entries(result)) {
     if (status.updateAvailable !== true || isUpdatablePlugin(activeProfileDir, name, composed)) continue
     result[name] = { ...status, updateAvailable: false, notAPlugin: true }

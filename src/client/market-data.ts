@@ -225,7 +225,7 @@ export type QueuedRowStaleReason = 'gone' | 'no-update' | 'target-changed'
  * have landed already).
  */
 export function queuedRowApplies(
-  row: { kind: 'install' | 'update' | 'uninstall'; name: string; url?: string; restore?: boolean; eligibleVersion?: string },
+  row: { kind: 'install' | 'update' | 'uninstall'; name: string; url?: string; restore?: boolean; eligibleVersion?: string; compatVersion?: string; compatibleVersion?: string },
   world: { installed: InstalledMap; updates: Record<string, UpdateStatus>; plugins: readonly RegistryPlugin[] },
 ): QueuedRowStaleReason | null {
   if (row.kind === 'install') {
@@ -242,6 +242,8 @@ export function queuedRowApplies(
         findCatalogEntryForLocal(world.plugins, row.name) !== null) return null
     return 'no-update'
   }
+  if (row.kind === 'update' && row.compatVersion === undefined && row.restore !== true &&
+      row.compatibleVersion !== world.updates[row.name]?.compatibleVersion) return 'target-changed'
   if (row.kind === 'update' && row.eligibleVersion !== undefined &&
       row.eligibleVersion !== world.updates[row.name]?.eligibleVersion) return 'target-changed'
   return null
@@ -283,6 +285,10 @@ export interface UpdateStatus {
   checkFailed?: true
   /** Server-verified precise Desktop stable npm update target. */
   eligibleVersion?: string
+  /** Exact alternate release compatible with the running host. */
+  compatibleVersion?: string
+  /** A newer release requires another host, and no eligible compatible upgrade was found. */
+  hostUpdateBlocked?: { version: string; requirement: string | null; hostVersion: string }
   version?: string | null
   /** The latest check failed; any retained update facts came from an earlier successful check. */
   checkError?: 'unavailable'
@@ -2231,6 +2237,17 @@ export function masonryColumnCount(width: number, maxColumns: number, minColWidt
   if (!Number.isFinite(width) || width <= 0) return minColumns
   const fitted = Math.floor((width + 10) / minColWidth)
   return Math.min(maxColumns, Math.max(minColumns, fitted))
+}
+
+/** The same version the update action will request. */
+export function offeredUpdateVersion(status: UpdateStatus): string | null {
+  return status.compatibleVersion ?? status.eligibleVersion ?? status.latest ?? null
+}
+
+export function hostUpdateBlockedText(blocked: NonNullable<UpdateStatus['hostUpdateBlocked']>, t: Translate): string {
+  return blocked.requirement === null
+    ? t('hostUpdateBlockedUnknown').replace('{0}', blocked.version)
+    : t('hostUpdateBlockedRequirement').replace('{0}', blocked.version).replace('{1}', blocked.requirement)
 }
 
 /**

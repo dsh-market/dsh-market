@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Translate } from './market-data.ts'
+import { hostUpdateBlockedText, offeredUpdateVersion, type Translate } from './market-data.ts'
 import type { UpdateNotificationSnapshot } from './update-notifications.ts'
 import { UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from '../update-notification-settings.ts'
 import { HostSwitch } from './optional-primitives.ts'
-import { notificationNames } from './update-notifications.ts'
+import { hostBlockedNotificationNames, notificationNames } from './update-notifications.ts'
 import css from './Market.module.css'
 
 /** The same snapshot that drives the sidebar; actions keep their existing owner. */
@@ -15,7 +15,7 @@ export function UpdateNotificationsPanel({ snapshot, t, busy, onCheck, onEnabled
   onCheck(): Promise<unknown>
   onEnabled(enabled: boolean): Promise<unknown>
   onIntervalHours(intervalHours: UpdateCheckIntervalHours): Promise<unknown>
-  onUpdate(name: string): void
+  onUpdate(name: string, selectedCompatibleVersion: string | null): void
   onOpenHost?: (name: string) => void
 }) {
   const [pending, setPending] = useState(false)
@@ -26,6 +26,8 @@ export function UpdateNotificationsPanel({ snapshot, t, busy, onCheck, onEnabled
     try { await action() } catch { setFailed(true) } finally { setPending(false) }
   }
   const entries = notificationNames(snapshot).map(name => [name, snapshot.updates[name]] as const)
+  // These are informational, not actionable reminders or part of the count.
+  const waiting = hostBlockedNotificationNames(snapshot).map(name => [name, snapshot.updates[name]] as const)
   // `stale` alone does not mean a check failed: the monitor also raises it when
   // the local inventory changed under the last result (another client installed
   // or removed a plugin), and that path clears no error. Reporting it as
@@ -73,14 +75,20 @@ export function UpdateNotificationsPanel({ snapshot, t, busy, onCheck, onEnabled
       {entries.map(([name, status]) => <li key={name}>
         <div className={css.updateChecksPackage}>
           <b>{name}</b>
-          <span>{status.version ?? status.current ?? '—'} → {status.eligibleVersion ?? status.latest}</span>
+          <span>{status.version ?? status.current ?? '—'} → {offeredUpdateVersion(status)}</span>
           {status.kind === 'generation' && <span>{t('hostUpdateHint')}</span>}
         </div>
         {status.kind === 'generation'
           ? onOpenHost !== undefined && <Button variant="ghost" size="sm" onClick={() => onOpenHost(name)}>{t('updateChecksOpenHost')}</Button>
           : <Button variant="ghost" size="sm" disabled={busy || snapshot.disabled.includes(name)}
-              onClick={() => onUpdate(name)}>{t(status.restoreRequired ? 'restoreOnline' : 'update')}</Button>}
+              onClick={() => onUpdate(name, status.compatibleVersion ?? null)}>{t(status.restoreRequired ? 'restoreOnline' : 'update')}</Button>}
       </li>)}
+    </ul>}
+    {waiting.length > 0 && <ul className={css.updateChecksList}>
+      {waiting.map(([name, status]) => <li key={name}><div className={css.updateChecksPackage}>
+        <b>{name}</b>
+        <span>{hostUpdateBlockedText(status.hostUpdateBlocked!, t)}</span>
+      </div></li>)}
     </ul>}
   </details>
 }

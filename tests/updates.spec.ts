@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, readVersionMaturity, resolveDesktopMatureUpdate } from '../src/updates.ts'
+import { checkUpdates, compatibleUpdateInHistory, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, readVersionMaturity, resolveDesktopMatureUpdate } from '../src/updates.ts'
 
 describe('compareVersions', () => {
   it('orders by major, minor, then patch', () => {
@@ -1611,4 +1611,45 @@ describe('readVersionMaturity — the exact version a dialog names (#945)', () =
   })
 
   afterEach(() => { vi.unstubAllGlobals() })
+})
+
+
+describe('host-compatible historical update selection (#1307)', () => {
+  const host = { version: '0.2.2-rc.5', packages: new Set<string>() }
+  const name = 'dsh-example'
+  const now = Date.parse('2026-11-26T00:00:00Z')
+  const old = '2026-11-20T00:00:00Z'
+  const young = '2026-11-25T23:00:00Z'
+  const release = (version: string, range?: string) => ({ name, version, ...(range ? { engines: { dsh: range } } : {}) })
+  const history = {
+    'dist-tags': { latest: '3.0.0' },
+    versions: {
+      '1.0.0': release('1.0.0', '>=0.2.2-rc.3'),
+      '1.1.0': release('1.1.0', '>=0.2.2-rc.3'),
+      '1.2.0': release('1.2.0'),
+      '1.3.0': release('1.3.0', '>=0.2.2-rc.3'),
+      '1.4.0-beta.1': release('1.4.0-beta.1', '>=0.2.2-rc.3'),
+      '1.5.0': release('1.5.0', '>=0.2.3-alpha.2'),
+      '3.0.0': release('3.0.0', '>=0.2.3-alpha.2'),
+      '4.0.0': release('4.0.0', '>=0.2.2-rc.3'),
+    },
+    time: { '1.0.0': old, '1.1.0': old, '1.2.0': old, '1.3.0': young, '1.4.0-beta.1': old, '1.5.0': old, '3.0.0': old, '4.0.0': old },
+  }
+  it('uses a known-compatible upgrade within the original ceiling, not an unknown, newer tag, or stable-to-prerelease transition', () => {
+    expect(compatibleUpdateInHistory(history, name, '1.0.0', '1.5.0', '3.0.0', host, true)).toBe('1.3.0')
+    expect(compatibleUpdateInHistory(history, name, '1.0.0', '1.5.0', '3.0.0', host, false)).toBe('1.4.0-beta.1')
+    expect(compatibleUpdateInHistory(history, name, '1.3.0', '1.5.0', '3.0.0', host, true)).toBeNull()
+  })
+  it('does not promote a compatible but young release over a mature one', () => {
+    const maturity = { minimumReleaseAgeMs: 24 * 3_600_000 }
+    expect(compatibleUpdateInHistory(history, name, '1.0.0', '1.5.0', '3.0.0', host, true, maturity, now)).toBe('1.1.0')
+    expect(compatibleUpdateInHistory(history, name, '1.0.0', '1.5.0', '3.0.0', host, true, {
+      ...maturity, exemptVersions: new Set(['1.3.0']),
+    }, now)).toBe('1.3.0')
+  })
+  it('distinguishes inconsistent/unavailable history from no compatible upgrade', () => {
+    expect(compatibleUpdateInHistory({}, name, '1.0.0', '1.5.0', '3.0.0', host, true)).toBeUndefined()
+    expect(compatibleUpdateInHistory(history, name, '1.0.0', '1.5.0', '2.0.0', host, true)).toBeUndefined()
+    expect(compatibleUpdateInHistory(history, name, '1.3.0', '1.5.0', '3.0.0', host, true)).toBeNull()
+  })
 })

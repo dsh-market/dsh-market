@@ -41,7 +41,7 @@ export interface OperationRecord {
   /** Catalog url, present for installs — what a card is keyed by. */
   url?: string
   /** Original update options survive queueing and build approval; agent consent is never persisted. */
-  updateOptions?: { force?: boolean; restore?: boolean; compatVersion?: string | undefined; eligibleVersion?: string }
+  updateOptions?: { force?: boolean; restore?: boolean; compatVersion?: string | undefined; eligibleVersion?: string; compatibleVersion?: string }
   /**
    * Set while the Host owns this operation and coordinates Agent holds
    * (#411). These rows are never written to the client queue: the Host's
@@ -352,6 +352,7 @@ function restoreSettledRecord(value: unknown): OperationRecord | null {
     ...(typeof options.restore === 'boolean' ? { restore: options.restore } : {}),
     ...(asText(options.compatVersion) === undefined ? {} : { compatVersion: asText(options.compatVersion) }),
     ...(asText(options.eligibleVersion) === undefined ? {} : { eligibleVersion: asText(options.eligibleVersion) }),
+    ...(asText(options.compatibleVersion) === undefined ? {} : { compatibleVersion: asText(options.compatibleVersion) }),
   } : undefined
   return {
     id,
