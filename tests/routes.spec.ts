@@ -1942,3 +1942,27 @@ describe('what the organization turned off, as the routes report it', () => {
     expect(jsonBody(status)).toMatchObject({ githubProxyManaged: true, githubProxyByPolicy: true })
   })
 })
+
+describe('a route that cannot be registered takes the ones before it with it (#1309)', () => {
+  it('undoes what it already registered before the failure escapes', () => {
+    const live = new Map<string, RouteHandler>()
+    let attempts = 0
+    const host: MarketHost = {
+      webServer: {
+        register(route) {
+          attempts += 1
+          if (attempts === 2) throw new Error(`duplicate exact route "${route.path}"`)
+          live.set(route.path, route.handler)
+          return () => { live.delete(route.path) }
+        },
+      },
+      loader: { entries: () => [] },
+      plugin: () => ({ await: async () => undefined, dispose: async () => undefined }),
+    }
+
+    expect(() => mountMarketRoutes(host, { profile: 'web', profileDirectory: dir, region: 'global' })).toThrow(/duplicate exact route/)
+
+    expect(attempts).toBeGreaterThan(1)
+    expect([...live.keys()]).toEqual([])
+  })
+})

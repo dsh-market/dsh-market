@@ -3493,16 +3493,24 @@ export function mountMarketRoutes(
    * is `dsh web` reached through a proxy or a tunnel, which this covers.
    */
   const enforceHostGate = config.desktopHost !== true
+  // Every dispose the host hands back is recorded as it arrives, so a later
+  // registration that throws can undo the ones before it: `webServer.register`
+  // fails when another plugin already owns the path, and by then the routes
+  // registered earlier have no other owner (#1309).
+  const settledRoutes: (() => void)[] = []
   const registerRoute = (route: Parameters<WebServerService['register']>[0]): (() => void) => {
-    if (!enforceHostGate) return host.webServer.register(route)
     const handler = route.handler
-    return host.webServer.register({
-      ...route,
-      handler: (request: IncomingMessage, response: ServerResponse) => {
-        if (refuseUnadmitted(request, response)) return
-        return handler(request, response)
-      },
-    })
+    const dispose = enforceHostGate
+      ? host.webServer.register({
+          ...route,
+          handler: (request: IncomingMessage, response: ServerResponse) => {
+            if (refuseUnadmitted(request, response)) return
+            return handler(request, response)
+          },
+        })
+      : host.webServer.register(route)
+    settledRoutes.push(dispose)
+    return dispose
   }
 
   const telemetryOptions: HeartbeatOptions = {
@@ -3527,7 +3535,10 @@ export function mountMarketRoutes(
   // Announced once the routes below are up; handlers read it lazily.
   let instanceClaim: ReturnType<typeof claimInstance> | undefined
 
-  const disposers = [
+  // Built by a function rather than inline: if one registration throws, the
+  // partially evaluated array is dropped and the disposers already collected
+  // in `settledRoutes` are the only handle left to undo them (#1309).
+  const buildRouteTable = (): (() => void)[] => [
     // The market page was opened. The page says so once per load; the count
     // keeps the first one of each UTC day and ignores the rest. Answered at
     // once: the page never waits on a network round trip for a count.
@@ -10008,6 +10019,19 @@ export function mountMarketRoutes(
       },
     })),
   ]
+
+  let disposers: (() => void)[]
+  try {
+    disposers = buildRouteTable()
+  } catch (error) {
+    // A path another plugin already owns throws out of `webServer.register`.
+    // Without this, the routes registered before it stay live on the host
+    // after the market is stopped (answering 401 instead of 404), and the
+    // next start collides with the market's own leftovers — only a host
+    // restart cleared it (#1309).
+    for (const dispose of [...settledRoutes].reverse()) dispose()
+    throw error
+  }
 
   startCheckoutRepair()
   const stopHeartbeat = startHeartbeat(telemetryOptions)
