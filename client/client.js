@@ -20841,6 +20841,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* hover (or never, on macOS) does not say so. Two arrows in the section head
 		* do: each one is there only while there is more to see in its direction.
 		*/
+		const RECENT_AUTOPLAY_MS = 1e4;
 		function RecentArrows({ rowRef, t }) {
 			const [edges, setEdges] = (0, react.useState)({
 				left: false,
@@ -20865,10 +20866,48 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					observer?.disconnect();
 				};
 			}, [rowRef]);
+			const [round, setRound] = (0, react.useState)(0);
+			(0, react.useEffect)(() => {
+				const row = rowRef.current;
+				if (row === null) return;
+				const behavior = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+				let held = false;
+				const hold = () => {
+					held = true;
+				};
+				const release = () => {
+					held = row.matches(":hover") || row.contains(document.activeElement);
+				};
+				row.addEventListener("mouseenter", hold);
+				row.addEventListener("mouseleave", release);
+				row.addEventListener("focusin", hold);
+				row.addEventListener("focusout", release);
+				const timer = setInterval(() => {
+					if (held || document.hidden) return;
+					const max = row.scrollWidth - row.clientWidth;
+					if (max <= 2) return;
+					if (row.scrollLeft >= max - 2) row.scrollTo({
+						left: 0,
+						behavior
+					});
+					else row.scrollBy({
+						left: row.clientWidth * .85,
+						behavior
+					});
+				}, RECENT_AUTOPLAY_MS);
+				return () => {
+					clearInterval(timer);
+					row.removeEventListener("mouseenter", hold);
+					row.removeEventListener("mouseleave", release);
+					row.removeEventListener("focusin", hold);
+					row.removeEventListener("focusout", release);
+				};
+			}, [rowRef, round]);
 			if (!edges.left && !edges.right) return null;
 			const page = (direction) => {
 				const row = rowRef.current;
 				if (row === null) return;
+				setRound((value) => value + 1);
 				row.scrollBy({
 					left: direction * row.clientWidth * .85,
 					behavior: "smooth"

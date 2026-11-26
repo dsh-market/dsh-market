@@ -60,14 +60,16 @@ function RecentArrows({ rowRef, t }: { rowRef: RefObject<HTMLDivElement | null>;
   }, [rowRef])
   // Turns the page by itself every RECENT_AUTOPLAY_MS so every new plugin (and
   // the sponsored one up front) gets seen; at the end it goes back to the
-  // start. Stops while the pointer or focus is in the strip, while the tab is
-  // hidden, and for people who asked for less motion. Using the arrows
+  // start. Stops while the pointer or focus is in the strip and while the tab is
+  // hidden. Using the arrows
   // restarts the wait, so a click is never followed by an instant second turn.
   const [round, setRound] = useState(0)
   useEffect(() => {
     const row = rowRef.current
     if (row === null) return
-    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    // Reduced motion keeps the paging (it is content, not decoration) but
+    // jumps instead of gliding.
+    const behavior: ScrollBehavior = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
     let held = false
     const hold = () => { held = true }
     const release = () => { held = row.matches(':hover') || row.contains(document.activeElement) }
@@ -79,8 +81,8 @@ function RecentArrows({ rowRef, t }: { rowRef: RefObject<HTMLDivElement | null>;
       if (held || document.hidden) return
       const max = row.scrollWidth - row.clientWidth
       if (max <= 2) return
-      if (row.scrollLeft >= max - 2) row.scrollTo({ left: 0, behavior: 'smooth' })
-      else row.scrollBy({ left: row.clientWidth * 0.85, behavior: 'smooth' })
+      if (row.scrollLeft >= max - 2) row.scrollTo({ left: 0, behavior })
+      else row.scrollBy({ left: row.clientWidth * 0.85, behavior })
     }, RECENT_AUTOPLAY_MS)
     return () => {
       clearInterval(timer)
