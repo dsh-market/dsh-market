@@ -1037,7 +1037,12 @@ export async function checkUpdates(
         // A proxied legacy URL or exact `github:#sha` carries its pin in the
         // spec; a mutable `github:` shortcut keeps it in the lockfile. Prefer
         // the spec because it is authoritative even if the lockfile is stale.
-        const current = githubCommitOfTarget(spec) ?? lockCommits.get(`github.com/${repo}`) ?? null
+        // The lockfile's own entry for the spec comes before the repository
+        // map: that map keeps one commit per repository, so a `#path:`
+        // subpackage would read whichever sibling pnpm listed last (#1296).
+        const current = githubCommitOfTarget(spec)
+          ?? readGitResolutionCommit(profile, spec, activeProfileDir)
+          ?? lockCommits.get(`github.com/${repo}`) ?? null
         // git's own ref advertisement, NOT api.github.com/repos/…/commits.
         // The REST API allows 60 requests an hour per IP unauthenticated,
         // shared across every plugin AND every check — a handful of
