@@ -34,8 +34,8 @@ export const name = 'dsh-market'
  */
 const PENDING_UPDATE_REPAIR_DELAY_MS = 8_000
 
-/** Optional cordis.yml configuration; profile defaults to `web`. */
-export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots' | 'buildEnv'>>
+/** Optional cordis.yml configuration; profile defaults to `web`. `findPluginCommand: false` keeps `/find-plugin` out of the slash menu. */
+export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots' | 'buildEnv'>> & { findPluginCommand?: boolean }
 
 /** A field the form may edit; newer hosts hand one back as a live reference (#1144). */
 const editable = <S>(schema: S): S => (schema as { extra(key: string, value: unknown): S }).extra('volatile', true)
@@ -49,6 +49,7 @@ export const Config = z.object({
   region: z.string().loose(),
   allowRestart: editable(z.boolean().loose()),
   maxSnapshots: editable(z.number().loose()),
+  findPluginCommand: z.boolean().loose(),
   buildEnv: z.dict(z.any()).loose().extra('default', undefined),
 }).loose()
 
@@ -558,7 +559,10 @@ export function apply(ctx: Context, config?: Config): void {
 
   // `/find-plugin` in the chat. Only hosts that ship the command registry
   // (dsh-commands) offer it; on an older host this never runs and nothing
-  // else depends on it.
+  // else depends on it. `findPluginCommand: false` opts out of it entirely,
+  // for operators who keep the slash menu short; the market's own AI search is
+  // unaffected.
+  if (valueOf(config?.findPluginCommand) === false) return
   ctx.inject(['commands'], (commandsCtx: Context) => {
     const commands = (commandsCtx as unknown as { commands: CommandsServiceLike }).commands
     ;(commandsCtx as unknown as MarketEffectHost).effect(

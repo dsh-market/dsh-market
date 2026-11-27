@@ -439,6 +439,20 @@ describe('host adaptation', () => {
     expect(state.runtimeDisposals).toBe(1)
   })
 
+  it('skips the /find-plugin registration when findPluginCommand is false', () => {
+    const ctx = new FakeContext({
+      webServer: {},
+      loader: {},
+      desktopProfiles: { current: { name: 'desktop', dir: '/private/dsh/desktop' } },
+    })
+    apply(ctx as never, { findPluginCommand: false })
+
+    // Everything else is wired exactly as before; only the optional command
+    // registry is never asked for, so the command cannot appear.
+    expect(ctx.injectCalls).toEqual([['webServer', 'loader'], ['desktopPnpm']])
+    expect(ctx.injectCalls.flat()).not.toContain('commands')
+  })
+
   it('forwards a host activation capability so routes never create a second loader entry (#551)', () => {
     const desktopPnpm = { runPlugin: vi.fn() }
     const activation = { activate: vi.fn().mockResolvedValue({ ok: true }) }
