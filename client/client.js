@@ -424,6 +424,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installedBadge: "✓ 已安装",
 			alreadyInstalled: "✓ 已安装",
 			restartBanner: "项变更需重启 DeepSeek Harness 后生效",
+			applyOnRestart: "重启后生效",
+			activationDeferred: "将在下次启动 DeepSeek Harness 时生效。",
+			reloadMarketNow: "立即重载市场",
+			reloadMarketWarning: "重载市场会替换运行中的模块并刷新此页面，可能中断会话中正在生成的回复或工具调用。",
+			restartHostWarning: "重启 DeepSeek Harness 会停止当前宿主，可能中断所有会话中正在生成的回复或工具调用。",
 			addMenuMarket: "从插件市场安装",
 			addMenuMarketHint: "12,000+ 社区插件，装前看清它会做什么",
 			staleServer: "市场已经更新，但后台还在运行旧版本，这个功能要等它换成新版后才能用。按页面顶部的提示操作即可。",
@@ -1432,7 +1437,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installing: "Installing…",
 			installedBadge: "✓ Installed",
 			alreadyInstalled: "✓ Installed",
-			restartBanner: "change(s) pending restart — restart DeepSeek Harness to apply",
+			restartBanner: "change(s) will take effect on the next DeepSeek Harness restart",
+			applyOnRestart: "Apply on next restart",
+			activationDeferred: "Will apply on the next DeepSeek Harness restart.",
+			reloadMarketNow: "Reload market now",
+			reloadMarketWarning: "Reloading the market replaces running modules and refreshes this page. This can interrupt streaming replies or tool calls in progress.",
+			restartHostWarning: "Restarting DeepSeek Harness stops the current host. This can interrupt streaming replies or tool calls in any session.",
 			addMenuMarket: "Browse the Plugin Market",
 			addMenuMarketHint: "Find one of 12,000+ community plugins and install it in one click",
 			staleServer: "The market was updated, but the old version is still running in the background, so this is not available until it switches. Follow the notice at the top of the page.",
@@ -2442,6 +2452,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installedBadge: "✓ インストール済み",
 			alreadyInstalled: "✓ インストール済み",
 			restartBanner: "件の変更は DeepSeek Harness の再起動後に有効になります",
+			applyOnRestart: "次回の起動時に適用",
+			activationDeferred: "次回 DeepSeek Harness を起動したときに適用されます。",
+			reloadMarketNow: "今すぐマーケットを再読み込み",
+			reloadMarketWarning: "マーケットを再読み込みすると、実行中のモジュールが入れ替わり、このページが更新されます。生成中の応答や実行中のツール呼び出しが中断されることがあります。",
+			restartHostWarning: "DeepSeek Harness を再起動すると、現在のホストが停止します。どのセッションでも、生成中の応答や実行中のツール呼び出しが中断されることがあります。",
 			addMenuMarket: "プラグインマーケットから入れる",
 			addMenuMarketHint: "12,000 以上のコミュニティプラグインから探してワンクリックで導入",
 			staleServer: "マーケットは更新されましたが、バックグラウンドではまだ旧バージョンが動いているため、この機能は切り替わるまで使えません。ページ上部の案内に従ってください。",
@@ -18356,6 +18371,53 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			};
 		}
 		//#endregion
+		//#region src/client/ActivationActions.tsx
+		/** The install or update is already on disk. Deferring only acknowledges it. */
+		function ActivationActions({ t, action, label, working, busy, onImmediate, offerDefer = true }) {
+			const [deferred, setDeferred] = (0, react.useState)(false);
+			const [confirming, setConfirming] = (0, react.useState)(null);
+			const confirmLabel = t(action === "reload" ? "reloadMarketNow" : "restartNow");
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+				offerDefer && (deferred ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					role: "status",
+					children: t("activationDeferred")
+				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					variant: "primary",
+					size: "sm",
+					disabled: working,
+					onClick: () => setDeferred(true),
+					children: t("applyOnRestart")
+				})),
+				action !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					variant: "ghost",
+					size: "sm",
+					disabled: working || busy,
+					onClick: () => setConfirming(action),
+					children: working ? t("restarting") : label
+				}),
+				action !== null && confirming === action && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+					open: true,
+					onClose: () => setConfirming(null),
+					title: confirmLabel,
+					description: t(action === "reload" ? "reloadMarketWarning" : "restartHostWarning"),
+					footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "ghost",
+						autoFocus: true,
+						onClick: () => setConfirming(null),
+						children: t("cancel")
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "primary",
+						disabled: working || busy,
+						onClick: () => {
+							setConfirming(null);
+							onImmediate();
+						},
+						children: confirmLabel
+					})] })
+				})
+			] });
+		}
+		//#endregion
 		//#region src/client/OperationsPanel.tsx
 		/**
 		* The activity entry and its panel: every install, update and uninstall the
@@ -19256,7 +19318,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				...updatedNames,
 				...Object.keys(activations).filter((name) => activations[name]?.state === "restart")
 			].some((name) => name === "dshmarket" || name === "dsh-market");
-			const applyInPlace = hostCaps.selfReload && marketWaiting && !staleServer && reloadingSelf !== "failed";
+			const canReload = hostCaps.selfReload && (staleServer || marketWaiting) && reloadingSelf !== "failed";
+			const canRestart = restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone;
+			const activationBusy = hostBusy || busyUrl !== null || updatingName !== null || removingName !== null;
+			const activationActions = /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ActivationActions, {
+				t,
+				action: canReload ? "reload" : canRestart ? "restart" : null,
+				label: t(canReload ? "staleReload" : staleServer ? "staleRestart" : "restartNow"),
+				working: reloadingSelf === "working" || restarting,
+				busy: activationBusy,
+				onImmediate: canReload ? applyNow : doRestart
+			}, JSON.stringify([
+				bootId,
+				version,
+				pendingRestart,
+				canReload,
+				canRestart
+			]));
 			const [moreOpen, setMoreOpen] = (0, react.useState)(false);
 			const [restartClosedAt, setRestartClosedAt] = (0, react.useState)(0);
 			const [offerClosed, setOfferClosed] = (0, react.useState)(() => {
@@ -19650,19 +19728,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										reloadingSelf === "failed" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", reloadError !== "" ? reloadError : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint")] })
 									]
 								}),
-								hostCaps.selfReload && reloadingSelf !== "failed" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "primary",
-									size: "sm",
-									disabled: reloadingSelf === "working" || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null,
-									onClick: applyNow,
-									children: reloadingSelf === "working" ? t("restarting") : t("staleReload")
-								}) : restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "primary",
-									size: "sm",
-									disabled: restarting || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null,
-									onClick: doRestart,
-									children: restarting ? t("restarting") : t("staleRestart")
-								})
+								activationActions
 							]
 						}),
 						showMarketOffer && tab === "installed" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -19734,20 +19800,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconQuestionOutline14, { size: 14 })
 									})
 								}),
-								applyInPlace ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "primary",
-									size: "sm",
-									disabled: reloadingSelf === "working" || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null,
-									onClick: applyNow,
-									children: reloadingSelf === "working" ? t("restarting") : t("staleReload")
-								}) : restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "primary",
-									size: "sm",
-									disabled: restarting || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null,
-									onClick: doRestart,
-									children: restarting ? t("restarting") : t("restartNow")
-								}),
-								reloadingSelf === "failed" && reloadError !== "" && marketWaiting && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								!staleServer && activationActions,
+								staleServer && canReload && canRestart && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ActivationActions, {
+									t,
+									action: "restart",
+									label: t("restartNow"),
+									offerDefer: false,
+									working: restarting || reloadingSelf === "working",
+									busy: activationBusy,
+									onImmediate: doRestart
+								}, JSON.stringify([bootId, pendingRestart])),
+								!staleServer && reloadingSelf === "failed" && reloadError !== "" && marketWaiting && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: Market_module_css_default.grow,
 									children: reloadError
 								}),

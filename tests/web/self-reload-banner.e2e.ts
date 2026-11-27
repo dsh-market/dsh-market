@@ -3,12 +3,12 @@
  *
  * The market updates itself: the files on disk (and so the client bundle the
  * page loads) are new, the server half in the process is still the old one.
- * The page must say so and offer "Apply now"; clicking it must swap the new
- * server half in, reload the page, and leave a market with no banner whose
- * new routes answer.
+ * Deferring keeps that process and page running until the next normal start.
+ * A user who explicitly confirms an immediate reload can still switch in place.
  */
 
 import { mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -16,9 +16,9 @@ import { hostCanSwap, landBuild } from './market-build.ts'
 import { dshAvailable, launchMarketScaffold, openMarketPage, openMarketUi, waitMarketCatalog, watchConsole } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
-const SHOTS = '/tmp/self-reload-shots'
+const SHOTS = join(tmpdir(), 'self-reload-shots')
 
-describe.skipIf(!dshAvailable() || !hostCanSwap()).sequential('web e2e: "Apply now" after the market updated itself', () => {
+describe.skipIf(!dshAvailable() || !hostCanSwap()).sequential('web e2e: activation after the market updated itself', () => {
   let scaffold: WebScaffold
   let browser: Browser
   let newVersion = ''
@@ -60,38 +60,80 @@ describe.skipIf(!dshAvailable() || !hostCanSwap()).sequential('web e2e: "Apply n
 
   const status = async (): Promise<{ version: string; selfReload: boolean }> => (await scaffold.api('/dsh-market/status')).json() as Promise<{ version: string; selfReload: boolean }>
 
-  it('shows the banner with "Apply now" in Chinese and English, before anything is clicked', async () => {
+  function watchActivation(page: Page) {
+    const activity = { posts: [] as string[], navigations: 0 }
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname
+      if (request.method() === 'POST' && /\/dsh-market\/(?:restart|reload-self)$/.test(path)) activity.posts.push(path)
+    })
+    page.on('framenavigated', frame => { if (frame === page.mainFrame()) activity.navigations++ })
+    return activity
+  }
+
+  it('can wait in Chinese and English without interrupting the page, then activates on a normal restart (#1321)', async () => {
     expect((await status()).selfReload).toBe(true)
-    expect((await status()).version).not.toBe(newVersion)
-    for (const [locale, button, file] of [['zh-CN', '立即生效', 'banner-zh.png'], ['en-US', 'Apply now', 'banner-en.png']] as const) {
+    const running = (await status()).version
+    expect(running).not.toBe(newVersion)
+    const cases = [
+      ['zh-CN', '重启后生效', '将在下次启动 DeepSeek Harness 时生效。', 'banner-zh.png'],
+      ['en-US', 'Apply on next restart', 'Will apply on the next DeepSeek Harness restart.', 'banner-en.png'],
+    ] as const
+    for (const [locale, label, message, file] of cases) {
       const page = await openMarket(locale)
       try {
         const banner = page.locator('[data-dshm-stale-server]')
-        await banner.waitFor({ timeout: 30_000 })
-        await banner.getByRole('button', { name: button }).waitFor({ timeout: 10_000 })
+        const defer = banner.getByRole('button', { name: label, exact: true })
+        await defer.waitFor({ timeout: 30_000 })
         await banner.scrollIntoViewIfNeeded()
         await page.screenshot({ path: join(SHOTS, file) })
+        const activity = watchActivation(page)
+        await defer.click()
+        const deferred = banner.getByRole('status')
+        await deferred.waitFor()
+        expect(await deferred.innerText()).toBe(message)
+        expect(await defer.count()).toBe(0)
+        expect((await status()).version).toBe(running)
+        expect(activity).toEqual({ posts: [], navigations: 0 })
       } finally { await page.context().close() }
     }
+
+    await scaffold.restart()
+    expect((await status()).version).toBe(newVersion)
+    const page = await openMarket('en-US')
+    try {
+      expect(await page.locator('[data-dshm-stale-server]').count()).toBe(0)
+      const route = await scaffold.api('/dsh-market/e2e-banner-new')
+      expect(route.status).toBe(200)
+      expect(await route.text()).toBe(`new-build ${newVersion}`)
+    } finally { await page.context().close() }
   }, 300_000)
 
-  it('applies in place: the page reloads, the banner is gone, the new server half answers', async () => {
+  it('reloads the page and activates a newer build in place only after confirmation', async () => {
+    // Let the first visit after the restart finish configuring the profile.
+    await new Promise(resolve => setTimeout(resolve, 8000))
+    const running = (await status()).version
+    const nextVersion = await landBuild(scaffold, 2, { newRoute: '/dsh-market/e2e-banner-confirmed' })
     const page = await openMarket('en-US')
     const errors = watchConsole(page)
     try {
       const banner = page.locator('[data-dshm-stale-server]')
       await banner.waitFor({ timeout: 30_000 })
-      const reloaded = page.waitForEvent('load', { timeout: 60_000 })
+      const activity = watchActivation(page)
       await banner.getByRole('button', { name: 'Apply now' }).click()
+      const confirm = page.getByRole('dialog').getByRole('button', { name: 'Reload market now' })
+      await confirm.waitFor()
+      expect((await status()).version).toBe(running)
+      expect(activity).toEqual({ posts: [], navigations: 0 })
+      const reloaded = page.waitForEvent('load', { timeout: 60_000 })
+      await confirm.click()
       await reloaded
-
-      // The server reports the version the page is, so the page stops saying otherwise.
-      expect((await status()).version).toBe(newVersion)
+      expect(activity.posts).toEqual(['/dsh-market/reload-self'])
+      expect((await status()).version).toBe(nextVersion)
       await enterMarket(page)
       expect(await page.locator('[data-dshm-stale-server]').count()).toBe(0)
-      const route = await scaffold.api('/dsh-market/e2e-banner-new')
+      const route = await scaffold.api('/dsh-market/e2e-banner-confirmed')
       expect(route.status).toBe(200)
-      expect(await route.text()).toBe(`new-build ${newVersion}`)
+      expect(await route.text()).toBe(`new-build ${nextVersion}`)
       expect(errors.errors().filter(text => !/net::|Failed to load resource/.test(text))).toEqual([])
     } finally { await page.context().close() }
   }, 300_000)

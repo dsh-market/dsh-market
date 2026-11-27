@@ -12,6 +12,7 @@ import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GithubRoutedImg, MarketSection, OwnerAvatar, resetHostCompatibilityCache, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
+import * as clientVersion from '../../src/client/client-version.ts'
 import css from '../../src/client/Market.module.css'
 import { DISMISSED_HOST_STORAGE_KEY, resetDismissedHostCache } from '../../src/client/dismissed-host.ts'
 import { downloadStatsText } from '../../src/client/download-stats.ts'
@@ -4182,6 +4183,7 @@ describe('MarketSection (jsdom)', () => {
           path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
           : path === '/dsh-market/installed' ? {
               profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [], groups: {}, groupOrder: [],
+              activation: { 'dsh-loop': { state: 'restart', reasons: [], hot: false, bundle: true } },
             }
           : path === '/dsh-market/status' ? (() => {
               const busy = operationStarted && !updateSettled
@@ -4214,6 +4216,8 @@ describe('MarketSection (jsdom)', () => {
       // publish busy=false, which is the real ordering reported in #440.
       await vi.advanceTimersByTimeAsync(2100)
       expect(busyStatusObserved).toBe(true)
+      expect((screen.getByRole('button', { name: en.restartNow }) as HTMLButtonElement).disabled).toBe(true)
+      expect((screen.getByRole('button', { name: en.applyOnRestart }) as HTMLButtonElement).disabled).toBe(false)
       updateSettled = true
       resolveUpdate(new Response(JSON.stringify({
         ok: true,
@@ -4223,9 +4227,8 @@ describe('MarketSection (jsdom)', () => {
       }), { status: 200 }))
 
       await vi.waitFor(() => {
-        expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0)
+        expect((screen.getByRole('button', { name: en.restartNow }) as HTMLButtonElement).disabled).toBe(false)
       })
-      expect((screen.getByRole('button', { name: en.restartNow }) as HTMLButtonElement).disabled).toBe(false)
     } finally {
       vi.useRealTimers()
     }
@@ -10104,6 +10107,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
       // The fact that a restart is needed is still stated — only the impossible
       // action goes. A banner that vanished would hide the fact itself.
       expect(screen.queryByRole('button', { name: en.restartNow })).toBeNull()
+      expect(screen.getByRole('button', { name: en.applyOnRestart })).toBeTruthy()
       // What the hint SAYS is pinned below, on the pure function that picks it.
     })
 
@@ -10125,29 +10129,90 @@ describe('standing restart notice for host-reported pending plugins', () => {
   })
 })
 
-describe('a shell that runs the host as its child process owns the restart', () => {
+describe('deferring activation and confirming an immediate market reload or host restart', () => {
   // A Tauri/Electron shell that spawned `dsh web` restarts by stopping the
   // process it started and relaunching its own window. The market's own route
   // spawns a detached helper instead — a second lifecycle competing with the
   // shell's for one port. Where the shell publishes its bridge, the button
   // asks the shell and never touches the host route.
   const restartError = 'Restart is unavailable in this fixture'
-  function stubStatus(extra: Record<string, unknown> = {}) {
-    const installed = { 'dsh-loop': '^1.0.0' }
+  function stubStatus(extra: Record<string, unknown> = {}, name = 'dsh-loop') {
+    const installed = { [name]: '^1.0.0' }
     stubFetch({
       '/dsh-market/installed': {
         profile: 'web', installed, live: [],
-        activation: { 'dsh-loop': { state: 'restart', reasons: ['in the bundle layer'], bundle: true, hot: false } },
+        activation: { [name]: { state: 'restart', reasons: ['in the bundle layer'], bundle: true, hot: false } },
       },
       '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed, ...extra },
       '/dsh-market/updates': { updates: {} },
       // End the request: a rejected fetch starts restart polling that outlives
       // this test and can reach a later test's fetch mock.
       '/dsh-market/restart': { __status: 503, error: restartError },
+      '/dsh-market/reload-self': { __status: 422, error: 'Reload is unavailable in this fixture' },
     })
   }
 
+  const lifecyclePosts = () => fetchCalls.filter(call =>
+    call.method === 'POST' && ['/dsh-market/reload-self', '/dsh-market/restart'].includes(call.path))
+  async function confirmRestart() {
+    fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
+    const dialog = within(await screen.findByRole('dialog'))
+    expect(dialog.getByText(en.restartHostWarning)).toBeTruthy()
+    expect(lifecyclePosts()).toEqual([])
+    fireEvent.click(dialog.getByRole('button', { name: en.restartNow }))
+  }
+
   afterEach(() => { Reflect.deleteProperty(window, '__dshHostShell') })
+
+  it.each(['dsh-loop', 'dshmarket'])('defers activation of %s while preserving the outstanding change (#1321)', async name => {
+    const shellRestart = vi.fn()
+    Reflect.set(window, '__dshHostShell', { restart: shellRestart })
+    stubStatus({ selfReload: true }, name)
+    render(<MarketSection {...props()} />)
+    await showRestartBanner()
+
+    fireEvent.click(screen.getByRole('button', { name: en.applyOnRestart }))
+    expect(await screen.findByText(en.activationDeferred)).toBeTruthy()
+    expect(screen.getByText(re(en.restartBanner))).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(lifecyclePosts()).toEqual([])
+    expect(shellRestart).not.toHaveBeenCalled()
+  })
+
+  it('offers one default and preserves both immediate actions for a stale market and pending plugins (#1321)', async () => {
+    // The unbundled client has no build version. Simulate a page newer than
+    // the running server, keeping the real banner and capability selection.
+    const behind = vi.spyOn(clientVersion, 'serverIsBehind').mockImplementation(version => version === '1.0.0')
+    try {
+      stubStatus({ version: '1.0.0', selfReload: true })
+      render(<MarketSection {...props()} />)
+      await showRestartBanner()
+      const stale = document.querySelector<HTMLElement>('[data-dshm-stale-server]')!
+      expect(screen.getByRole('button', { name: en.applyOnRestart })).toBe(
+        within(stale).getByRole('button', { name: en.applyOnRestart }))
+
+      const pending = screen.getByText(re(en.restartBanner)).parentElement!
+      fireEvent.click(within(pending).getByRole('button', { name: en.restartNow }))
+      const restartDialog = within(await screen.findByRole('dialog'))
+      expect(restartDialog.getByText(en.restartHostWarning)).toBeTruthy()
+      expect(lifecyclePosts()).toEqual([])
+      fireEvent.click(restartDialog.getByRole('button', { name: en.cancel }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(lifecyclePosts()).toEqual([])
+
+      fireEvent.click(within(stale).getByRole('button', { name: en.staleReload }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect(dialog.getByText(en.reloadMarketWarning)).toBeTruthy()
+      expect(lifecyclePosts()).toEqual([])
+      fireEvent.click(dialog.getByRole('button', { name: en.cancel }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(lifecyclePosts()).toEqual([])
+
+      fireEvent.click(within(stale).getByRole('button', { name: en.staleReload }))
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.reloadMarketNow }))
+      await waitFor(() => expect(lifecyclePosts().map(call => call.path)).toEqual(['/dsh-market/reload-self']))
+    } finally { behind.mockRestore() }
+  })
 
   it('asks the shell, and never posts to the host restart route', async () => {
     const shellRestart = vi.fn()
@@ -10157,6 +10222,11 @@ describe('a shell that runs the host as its child process owns the restart', () 
     await showRestartBanner()
 
     fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
+    const dialog = within(await screen.findByRole('dialog'))
+    expect(shellRestart).not.toHaveBeenCalled()
+    fireEvent.click(dialog.getByRole('button', { name: en.cancel }))
+    expect(shellRestart).not.toHaveBeenCalled()
+    await confirmRestart()
 
     await waitFor(() => { expect(shellRestart).toHaveBeenCalledTimes(1) })
     expect(fetchCalls.some(call => call.path === '/dsh-market/restart')).toBe(false)
@@ -10167,7 +10237,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
     render(<MarketSection {...props()} />)
     await showRestartBanner()
 
-    fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
+    await confirmRestart()
 
     await waitFor(() => {
       expect(fetchCalls.some(call => call.path === '/dsh-market/restart' && call.method === 'POST')).toBe(true)
@@ -10183,7 +10253,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
     render(<MarketSection {...props()} />)
     await showRestartBanner()
 
-    fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
+    await confirmRestart()
 
     await waitFor(() => {
       expect(fetchCalls.some(call => call.path === '/dsh-market/restart' && call.method === 'POST')).toBe(true)
