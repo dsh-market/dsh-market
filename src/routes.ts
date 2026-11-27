@@ -8072,14 +8072,23 @@ export function mountMarketRoutes(
             // Restore the row, scoped to exactly that refusal and to this
             // operation's own target: the read-only stance in #720/#696
             // still holds for every other way a row can disappear.
-            if (!ok && !cancelled && result.refusalCode === 'bundle-in-use' && (checkoutSource === null || rollbackOk)) {
+            //
+            // #1323: the same holds for ANY failure after the host's removal
+            // step, not only that refusal. removeBundle drops the row, then
+            // runs `pnpm remove`; when pnpm fails (a fresh-release wait, a
+            // network error) it throws without putting the row back, so the
+            // package stays installed and never loads again — and the next
+            // successful install of it lands on a row that is not there.
+            // Gated on the package still being on disk: a removal that really
+            // happened has nothing to restore.
+            if (!ok && !cancelled && (result.refusalCode === 'bundle-in-use' || existsSync(join(activeProfileDir, 'node_modules', name, 'package.json'))) && (checkoutSource === null || rollbackOk)) {
               const targetRowDropped = bundlesDroppedFromProfile(
                 manifestBefore, config.profile, activeProfileDir,
                 new Set(removedDeclaration === null ? [] : [removedDeclaration.name]),
               ).includes(name)
               if (targetRowDropped && addProfileBundle(activeProfileDir, name)) {
                 logEvent('warn', 'update-bundles-restored',
-                  `${name}: the desktop app removed its bundle row before refusing the update (bundle-in-use) — restored it so the plugin still loads on the next boot (#935)`)
+                  `${name}: the desktop app removed its bundle row before the update failed${result.refusalCode === undefined ? '' : ` (${String(result.refusalCode)})`} — restored it so the plugin still loads on the next boot (#935, #1323)`)
               }
             }
             // A FAILED update can also drop rows it never intended to touch.

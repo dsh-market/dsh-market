@@ -943,6 +943,22 @@ describe('successful release-age cleanup (#883, #878)', () => {
     expect(calls.filter(args => args[0] === 'add')).toEqual([['add', 'thing@1.1.0']])
   })
 
+  it('does not claim a retry that policy ruled out: the classifier\'s "already retried" sentence is replaced by the wait note (#1323)', async () => {
+    const dir = writeProfile({})
+    let adds = 0
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      if (args[0] === 'add') adds += 1
+      return { ...ok, exitCode: 1, stderr: '[ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED] 1 resolution-policy violation was produced but no handleResolutionPolicyViolations callback was wired to react to them.' }
+    }
+    const result = await withHoistRecovery(run, 'desktop', ['add', 'thing@1.1.0'], dir,
+      { marketFlags: false, releaseAgeBypass: false, preserveProfilePolicy: true })
+    expect(adds).toBe(1)
+    expect(result.stderr).toMatch(/没有自动重试/)
+    expect(result.stderr).toMatch(/no automatic retry happens here/)
+    expect(result.stderr).not.toMatch(/已自动放行重试一次/)
+    expect(result.stderr).not.toMatch(/retries once with a one-shot bypass/)
+  })
+
   it.each([
     ['add', 'thing'],
     ['remove', 'thing'],

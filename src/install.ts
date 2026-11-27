@@ -144,6 +144,7 @@ export async function withHoistRecovery(
   const repairProfilePolicy = options.preserveProfilePolicy !== true
   /** The option a recovery step needed and this host does not accept (#732). */
   let unavailableOption: string | null = null
+  let ageHeldByPolicy = false
   // Before the FIRST run, not after a failure: the shadowed duplicate rule
   // (#732) hurts pnpm while it RESOLVES the dependency graph, so merging it
   // first is what keeps the command from failing at all — and it costs one
@@ -218,6 +219,9 @@ export async function withHoistRecovery(
       } else if (options.releaseAgeBypass === false || options.preserveProfilePolicy === true) {
         // Fresh installs (#594) and mature updates/recovery (#991) never
         // bypass age enforcement. Preserve the native failure and policy.
+        // The classifier's text still says the market retried, and here it
+        // did not: the note below takes that sentence back (#1323).
+        ageHeldByPolicy = true
       } else if (!marketFlags) {
         unavailableOption = RELEASE_AGE_OVERRIDE
       } else if (pluginArgs.includes(RELEASE_AGE_OVERRIDE)) {
@@ -360,7 +364,7 @@ export async function withHoistRecovery(
       }
     }
   }
-  if (unavailableOption !== null && !ok(result) && !result.cancelled) {
+  if ((unavailableOption !== null || ageHeldByPolicy) && !ok(result) && !result.cancelled) {
     // #732: this step was skipped because the host runs pnpm itself and takes
     // no options from us — but the classified message above says the market
     // retried. Say that it did not, or the user reads a retry that never
@@ -376,7 +380,9 @@ export async function withHoistRecovery(
     // appended above and is false on this host, and the client prefers
     // body.error / that classified half over a note tacked on afterwards.
     let note: string
-    if (unavailableOption === RELEASE_AGE_OVERRIDE) {
+    if (unavailableOption === RELEASE_AGE_OVERRIDE || ageHeldByPolicy) {
+      const noRetryZh = ageHeldByPolicy ? '市场不会为这类改动临时放行新版本等待期，所以这里没有自动重试' : '官方桌面端不接受临时放行，所以这里没有自动重试'
+      const noRetryEn = ageHeldByPolicy ? 'the market does not lift the fresh-release wait for this kind of change, so no automatic retry happens here' : 'The official desktop app takes no one-shot bypass, so no automatic retry happens here'
       const classified = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
       if (classified?.code === 'release-age-violation') {
         const cut = result.stderr.lastIndexOf(classified.message)
@@ -402,9 +408,9 @@ export async function withHoistRecovery(
       const targetName = registryNameOf(target) ?? target
       const refused = refusedReleaseAgePackage(captured)
       if (refused !== null && targetName !== '' && refused.name !== targetName) {
-        note = `拦住你的是 ${refused.name}@${refused.version}，不是你要装的这个插件：pnpm 在改动前校验整个 lockfile，而这个版本还在本机的新版本等待期内（#944）。官方桌面端不接受临时放行，所以这里没有自动重试。**等 ${refused.name}@${refused.version} 过了等待期再更新一次即可**${wait.zh}；想现在就装，在 profile 的 pnpm-workspace.yaml 里 minimumReleaseAgeExclude 中**这个名字的那一行**（没有就新增一行）追加 \` || ${refused.version}\`——带引号的行要加在引号里面。不要另开一行同名规则：pnpm 只读第一条（#883）。 / What is holding you is ${refused.name}@${refused.version}, not the plugin you asked to install: pnpm verifies the whole lockfile before any change, and that version is still inside this machine's fresh-release wait (#944). The official desktop app takes no one-shot bypass, so no automatic retry happens here. **Update again once ${refused.name}@${refused.version} is past the wait**${wait.en}; to install right now, append \` || ${refused.version}\` to the row for \`${refused.name}\` under minimumReleaseAgeExclude in the profile's pnpm-workspace.yaml — inside the quotes when the row is quoted, and in a new row only if none exists. Do not add a second row for the same name: pnpm reads only the first (#883).`
+        note = `拦住你的是 ${refused.name}@${refused.version}，不是你要装的这个插件：pnpm 在改动前校验整个 lockfile，而这个版本还在本机的新版本等待期内（#944）。${noRetryZh}。**等 ${refused.name}@${refused.version} 过了等待期再更新一次即可**${wait.zh}；想现在就装，在 profile 的 pnpm-workspace.yaml 里 minimumReleaseAgeExclude 中**这个名字的那一行**（没有就新增一行）追加 \` || ${refused.version}\`——带引号的行要加在引号里面。不要另开一行同名规则：pnpm 只读第一条（#883）。 / What is holding you is ${refused.name}@${refused.version}, not the plugin you asked to install: pnpm verifies the whole lockfile before any change, and that version is still inside this machine's fresh-release wait (#944). ${noRetryEn}. **Update again once ${refused.name}@${refused.version} is past the wait**${wait.en}; to install right now, append \` || ${refused.version}\` to the row for \`${refused.name}\` under minimumReleaseAgeExclude in the profile's pnpm-workspace.yaml — inside the quotes when the row is quoted, and in a new row only if none exists. Do not add a second row for the same name: pnpm reads only the first (#883).`
       } else {
-        note = `这个插件的新版本比本机的新版本等待期还新，所以现在装不了（改别的插件也会被拦住）。官方桌面端不接受临时放行，所以这里没有自动重试。**等这个版本过了等待期再更新一次即可**${wait.zh}。过了等待期后再在市场点一次更新。 / The plugin's new version is younger than this machine's fresh-release wait, so the install was refused (a change to another plugin too). The official desktop app takes no one-shot bypass, so no automatic retry happens here. **Update again once the version is past the wait**${wait.en}. Try the market update again after the wait.`
+        note = `这个插件的新版本比本机的新版本等待期还新，所以现在装不了（改别的插件也会被拦住）。${noRetryZh}。**等这个版本过了等待期再更新一次即可**${wait.zh}。过了等待期后再在市场点一次更新。 / The plugin's new version is younger than this machine's fresh-release wait, so the install was refused (a change to another plugin too). ${noRetryEn}. **Update again once the version is past the wait**${wait.en}. Try the market update again after the wait.`
       }
     } else {
       note = `这台宿主（官方桌面端）自己执行安装，不接受市场附加的 pnpm 参数（${unavailableOption}），所以这一步没有自动重试。 / This host (the official desktop app) runs the install itself and takes no pnpm options from the market (${unavailableOption}), so that automatic retry could not be attempted.`

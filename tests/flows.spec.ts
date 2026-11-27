@@ -3782,6 +3782,44 @@ describe('update flow — no npm publishing required', () => {
     expect(after.dsh?.profile?.bundles).toContain('dsh-loop')
   })
 
+  it('also restores the row when pnpm failed after the manager dropped it (#1323)', async () => {
+    // removeBundle() takes the row out, THEN runs `pnpm remove`; a pnpm
+    // failure throws without putting it back. The package stays installed.
+    advanceNpmLatest('1.2.0')
+    const seeded = readManifestAt(fake.profileDir)
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      ...seeded,
+      dsh: { ...seeded.dsh, profile: { ...seeded.dsh?.profile, bundles: ['dsh-loop'] } },
+    }))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (_profile, args) => {
+        if (args[0] === 'add') {
+          const manifestPath = join(fake.profileDir, 'package.json')
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+          manifest.dsh!.profile!.bundles = []
+          writeFileSync(manifestPath, JSON.stringify(manifest))
+          return {
+            exitCode: 1, timedOut: false, stdout: '', cancelled: false, wroteNothing: true,
+            stderr: '[ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED] 1 resolution-policy violation was produced but no handleResolutionPolicyViolations callback was wired to react to them.',
+            refusalCode: 'operation-error',
+          }
+        }
+        return { exitCode: 0, timedOut: false, stdout: '', stderr: '', cancelled: false }
+      },
+      acceptsMarketPnpmFlags: false,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    const after = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    expect(after.dsh?.profile?.bundles).toContain('dsh-loop')
+  })
+
   it('answers RESTART_REQUIRED, keeps the dropped row, and says what to do when the host wants a restart first (#1253)', async () => {
     advanceNpmLatest('1.2.0')
     const seeded = readManifestAt(fake.profileDir)
