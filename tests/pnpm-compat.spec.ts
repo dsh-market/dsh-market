@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
+import { localizeBilingual } from '../src/client/market-data.ts'
 
 // The store layer is read from the environment pnpm would obey, so a host that
 // relocated its store (PNPM_CONFIG_STORE_DIR, as DSH Desktop users often do)
@@ -1445,5 +1446,85 @@ describe('a pnpm run the host stopped for silence (#817)', () => {
     expect(failed?.code).toBe('pnpm-stalled')
     expect(failed?.message).toContain('pnpm 10 分钟没有任何输出')
     expect(failed?.message).not.toContain('依赖')
+  })
+})
+
+describe('git remote network and proxy failures (#1090)', () => {
+  // Exact production diagnostic from #1090: git exit 128 because the configured
+  // local HTTP proxy was not running.
+  const PROXY_REFUSED = "fatal: unable to access 'https://github.com/Yuuyuko-uu/dsh-feiyu-mood/': Failed to connect to github.com:443 over proxy 127.0.0.1 after 0 ms: Could not connect to server"
+
+  it('classifies a git proxy connection failure and names the host and proxy', () => {
+    const failure = classifyPnpmFailure(PROXY_REFUSED, 128)
+    expect(failure?.code).toBe('git-network-failed')
+    expect(failure?.recoverable).toBe(false)
+    expect(failure?.message).toContain('github.com')
+    expect(failure?.message).toContain('127.0.0.1')
+    const zh = localizeBilingual(failure!.message, 'zh')
+    const en = localizeBilingual(failure!.message, 'en')
+    expect(zh).toMatch(/代理.*127\.0\.0\.1/)
+    expect(zh).not.toContain('Check your proxy')
+    expect(en).toMatch(/proxy 127\.0\.0\.1/i)
+    expect(en).not.toContain('代理')
+  })
+
+  it('decodes Desktop operation-error JSON carrying the git diagnostic', () => {
+    const wrapped = JSON.stringify({ code: 'operation-error', diagnostic: `${PROXY_REFUSED}\n` })
+    const failure = classifyPnpmFailure(wrapped, 128)
+    expect(failure?.code).toBe('git-network-failed')
+    expect(failure?.message).toContain('127.0.0.1')
+  })
+
+  it('classifies proxy failures without a named proxy address', () => {
+    const failure = classifyPnpmFailure(
+      "fatal: unable to access 'https://github.com/o/r.git/': Received HTTP code 502 from proxy after CONNECT",
+      128,
+    )
+    expect(failure?.code).toBe('git-network-failed')
+    expect(localizeBilingual(failure!.message, 'zh')).toContain('代理')
+    expect(localizeBilingual(failure!.message, 'en')).toMatch(/proxy/i)
+
+    const unresolved = classifyPnpmFailure(
+      "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve proxy: proxy.local.",
+      128,
+    )
+    expect(unresolved?.code).toBe('git-network-failed')
+    expect(unresolved?.message).toContain('proxy.local')
+    expect(unresolved?.message).not.toContain('proxy.local.')
+  })
+
+  it('classifies non-proxy git connection, DNS and TLS failures', () => {
+    const cases = [
+      "fatal: unable to access 'https://github.com/o/r/': Failed to connect to github.com port 443 after 21045 ms: Connection timed out",
+      "fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com",
+      "fatal: unable to access 'https://github.com/o/r/': Recv failure: Connection was reset",
+      "fatal: unable to access 'https://github.com/o/r/': OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443",
+    ]
+    for (const sample of cases) {
+      const failure = classifyPnpmFailure(sample, 128)
+      expect(failure?.code, sample).toBe('git-network-failed')
+      expect(failure?.recoverable).toBe(false)
+      expect(failure?.message).toContain('github.com')
+      expect(localizeBilingual(failure!.message, 'zh')).toMatch(/检查网络/)
+      expect(localizeBilingual(failure!.message, 'en')).toMatch(/Check your network/i)
+    }
+  })
+
+  it('never echoes credentials embedded in a remote URL or proxy string', () => {
+    const secret = "fatal: unable to access 'https://alice:top-secret-token@github.com/o/r/': Failed to connect to github.com:443 over proxy http://bob:proxy-pass@127.0.0.1:7890 after 0 ms: Could not connect to server"
+    const failure = classifyPnpmFailure(secret, 128)
+    expect(failure?.code).toBe('git-network-failed')
+    expect(failure?.message).toContain('github.com')
+    expect(failure?.message).toContain('127.0.0.1:7890')
+    expect(failure?.message).not.toContain('top-secret-token')
+    expect(failure?.message).not.toContain('proxy-pass')
+    expect(failure?.message).not.toContain('alice')
+    expect(failure?.message).not.toContain('bob')
+  })
+
+  it('does not misclassify HTTP status errors or generic remote access failures', () => {
+    expect(classifyPnpmFailure('ERR_PNPM_GIT_FETCH  fatal: unable to access the remote', 1)).toBeNull()
+    expect(classifyPnpmFailure("fatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 403", 128)).toBeNull()
+    expect(classifyPnpmFailure("fatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 404", 128)).toBeNull()
   })
 })

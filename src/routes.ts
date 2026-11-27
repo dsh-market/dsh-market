@@ -7701,9 +7701,21 @@ export function mountMarketRoutes(
                 if (rollback.ok) {
                   logEvent('warn', 'update', `${name}: failed update command; previous build restored and verified`)
                 } else {
-                  hardFailureRollbackError = checkoutSource !== null
-                    ? `${name} 换用线上版本失败，源码仍在，但无法恢复 profile 中的链接（${rollback.detail ?? 'unknown'}）。请完全退出 DSH 后检查本地插件链接。 / The switch to the online release failed for ${name}. The checkout is intact, but its profile link could not be restored (${rollback.detail ?? 'unknown'}). Quit DSH before inspecting that link.`
-                    : `${name} 更新失败，且更新前的构建未能验证恢复（${rollback.detail ?? 'unknown'}）；请先检查该 profile，再重新启动。 / ${name} update failed and restoration of the previous build could not be verified (${rollback.detail ?? 'unknown'}); inspect this profile before restarting.`
+                  const cause = pnpmFailureMessage(result, activeProfileDir)
+                  const detailRaw = rollback.detail ?? 'unknown'
+                  const detailParts = detailRaw.split(' / ')
+                  const detailZh = detailParts.length === 2
+                    && /[\u3400-\u9FFF]/.test(detailParts[0]!)
+                    && !/[\u3400-\u9FFF]/.test(detailParts[1]!)
+                    ? detailParts[0]! : detailRaw
+                  const detailEn = detailParts.length === 2
+                    && /[\u3400-\u9FFF]/.test(detailParts[0]!)
+                    && !/[\u3400-\u9FFF]/.test(detailParts[1]!)
+                    ? detailParts[1]! : detailRaw
+                  const rollbackNotice = checkoutSource !== null
+                    ? `${name} 换用线上版本失败，源码仍在，但无法恢复 profile 中的链接（${detailZh}）。请完全退出 DSH 后检查本地插件链接。 / The switch to the online release failed for ${name}. The checkout is intact, but its profile link could not be restored (${detailEn}). Quit DSH before inspecting that link.`
+                    : `${name} 更新失败，且更新前的构建未能验证恢复（${detailZh}）；请先检查该 profile，再重新启动。 / ${name} update failed and restoration of the previous build could not be verified (${detailEn}); inspect this profile before restarting.`
+                  hardFailureRollbackError = cause === undefined ? rollbackNotice : `${cause}\n${rollbackNotice}`
                   logEvent('error', 'update-rollback', `${name}: failed update command and restoration of the previous build could not be verified — ${rollback.detail ?? 'unknown'}`)
                 }
               }
