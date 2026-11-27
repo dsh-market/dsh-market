@@ -137,6 +137,12 @@ export interface ManagedBundleRow {
   source?: string
   /** How `updateBundle` can replace it; absent when it cannot. */
   update?: 'registry' | 'git'
+  /**
+   * What older managers (0.14.x) say instead of `update`: whether `updateBundle`
+   * accepts the row. Only registry-spec rows under their own name are ever
+   * `true` there, so it stands for `update: 'registry'` and nothing else (#909).
+   */
+  updatable?: boolean
 }
 
 export interface OfficialPluginManagerLike {
@@ -487,7 +493,7 @@ async function planInPlaceUpdate(
   let gitSpec: string | undefined
   if (named !== undefined) {
     row = rows.find(entry => entry.name === named)
-    if (row?.update !== 'registry') return decline(row === undefined ? 'not an installed bundle' : 'the host does not list it as updatable from a registry')
+    if (row?.update !== 'registry' && !(row?.update === undefined && row?.updatable === true)) return decline(row === undefined ? 'not an installed bundle' : 'the host does not list it as updatable from a registry')
     to = targetVersionOf(spec)
     if (to === '') return decline('the target is not an exact version')
   } else {

@@ -91,6 +91,29 @@ describe('an update through the host\'s updateBundle (dsh 0.2.2+)', () => {
     }
   })
 
+  it('takes a 0.14-style row (`updatable: true`, no `update`) as a registry bundle, and still declines when it is not (#909)', async () => {
+    const legacy = (over: Partial<ManagedBundleRow>): ManagedBundleRow => {
+      const { update: _update, ...rest } = row(over)
+      return rest
+    }
+    for (const [rows, calls] of [
+      [[legacy({ updatable: true })], 1],
+      [[legacy({ updatable: false })], 0],
+      [[legacy({})], 0],
+      // A host that says how it updates is believed over the boolean.
+      [[row({ update: 'git', updatable: true })], 0],
+    ] as const) {
+      const service = host({ rows: [...rows] })
+      const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+      try {
+        await runtime.runPlugin('desktop', ['add', 'example@2.0.0'])
+        expect(service.updateBundle).toHaveBeenCalledTimes(calls)
+      } finally {
+        await runtime.dispose()
+      }
+    }
+  })
+
   it('passes the market\'s download mirror as the registry asked first', async () => {
     vi.stubEnv('DSHM_NPM_MIRROR', 'https://mirror.example/npm')
     const service = host()
