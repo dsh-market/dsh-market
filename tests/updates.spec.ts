@@ -575,6 +575,45 @@ describe('checkUpdates — github pins', () => {
       .toMatchObject({ themer: { latest: null, updateAvailable: false } })
   })
 
+  it("reads a monorepo subpackage's own commit, not the sibling pnpm lists last (#1296)", async () => {
+    // Two `#path:` subpackages of one repository: plug-a already updated to
+    // HEAD, plug-b still on the older commit. pnpm writes each as the host's
+    // archive, and the repository-level map keeps one slot per repository —
+    // plug-b's, the entry listed last.
+    const dir = join(mkdtempSync(join(tmpdir(), 'dshm-upd-')), 'profiles', 'web')
+    const deps = { 'plug-a': 'github:owner/mono#path:/packages/plug-a', 'plug-b': 'github:owner/mono#path:/packages/plug-b' }
+    for (const name of Object.keys(deps)) {
+      mkdirSync(join(dir, 'node_modules', name), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+    }
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: deps }))
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), [
+      'lockfileVersion: 9',
+      `  resolution: {gitHosted: true, integrity: sha512-aaa, path: /packages/plug-a, tarball: https://codeload.github.com/owner/mono/tar.gz/${HEAD}}`,
+      `  resolution: {gitHosted: true, integrity: sha512-bbb, path: /packages/plug-b, tarball: https://codeload.github.com/owner/mono/tar.gz/${OLD}}`,
+      '',
+    ].join('\n'))
+
+    const result = await checkUpdates('web', true, dir)
+    expect(result['plug-a']).toMatchObject({ kind: 'github', current: HEAD, latest: HEAD, updateAvailable: false })
+    expect(result['plug-b']).toMatchObject({ kind: 'github', current: OLD, latest: HEAD, updateAvailable: true })
+
+    // With the subpackage's version readable the version decides, and the
+    // commits only name unreleased work: plug-a, already at HEAD, has none.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ version: '1.0.0' }),
+      text: async () => String(url).includes('info/refs')
+        ? `001e# service=git-upload-pack\n00000155${HEAD} HEAD\0multi_ack symref=HEAD:refs/heads/main\n`
+        : '',
+    })))
+    const byVersion = await checkUpdates('web', true, dir)
+    expect(byVersion['plug-a']).toMatchObject({ current: HEAD, updateAvailable: false })
+    expect(byVersion['plug-a']?.unreleasedCommit).toBeUndefined()
+    expect(byVersion['plug-b']).toMatchObject({ current: OLD, updateAvailable: false, unreleasedCommit: HEAD })
+  })
+
   it('treats a bare owner/repo spec as npm, not as a github pin', async () => {
     // pnpm accepts the shorthand, and it parses as a repo — but without the
     // `github:` prefix the package came from the registry, so asking GitHub
