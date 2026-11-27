@@ -21,6 +21,7 @@ import { load } from 'js-yaml'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { localizeBilingual } from '../src/client/market-data.ts'
 
 // ---------------------------------------------------------------- FakeDsh
 // Mutable per-test state driving the fake executor and fake npm API.
@@ -6066,6 +6067,48 @@ describe('update flow — no npm publishing required', () => {
     expect(fake.calls.some(call => call.includes(`git+${gitea}#${OLD}`))).toBe(true)
     expect(installedSpec('codearts')).toBe(`git+${gitea}`)
     expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toContain(OLD)
+  })
+
+  it('keeps the git network/proxy failure visible ahead of the rollback-unavailable warning (#1090)', async () => {
+    // Floating github: dependency installed outside pnpm-lock.yaml, so
+    // beforeCommit is null and automatic rollback is unavailable. When git
+    // fails because a local proxy is down, the update error must state that
+    // network/proxy cause first instead of burying it behind the rollback note.
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'dsh-feiyu-mood': 'github:Yuuyuko-uu/dsh-feiyu-mood' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'dsh-feiyu-mood')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'dsh-feiyu-mood', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+    fake.failNextAddStderrOnce = JSON.stringify({
+      code: 'operation-error',
+      diagnostic: "fatal: unable to access 'https://github.com/Yuuyuko-uu/dsh-feiyu-mood/': Failed to connect to github.com:443 over proxy 127.0.0.1 after 0 ms: Could not connect to server\n",
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-feiyu-mood' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    const error = String(r.json.error ?? '')
+    const lines = error.split('\n')
+    expect(lines.length).toBe(2)
+    // Line 1: the actual git proxy/network failure.
+    const zh = localizeBilingual(error, 'zh').split('\n')
+    const en = localizeBilingual(error, 'en').split('\n')
+    expect(zh[0]).toMatch(/代理.*127\.0\.0\.1/)
+    expect(zh[0]).toContain('github.com')
+    expect(zh[0]).not.toMatch(/proxy 127\.0\.0\.1/i)
+    expect(en[0]).toMatch(/proxy 127\.0\.0\.1/i)
+    expect(en[0]).toContain('github.com')
+    expect(en[0]).not.toContain('代理')
+    // Line 2: the separate rollback-not-verified note, localized cleanly per language.
+    expect(zh[1]).toContain('未能确认更新前的 GitHub 提交')
+    expect(zh[1]).not.toContain('The previous GitHub commit')
+    expect(en[1]).toContain('The previous GitHub commit could not be verified')
+    expect(en[1]).not.toContain('未能确认更新前的 GitHub 提交')
   })
 
   it('reports a non-GitHub git update whose remote did not move as stale, like a GitHub one (#632)', async () => {

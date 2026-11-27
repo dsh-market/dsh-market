@@ -50,7 +50,7 @@ export interface PnpmFailure {
     | 'fetch-404' | 'no-matching-version' | 'exact-version-missing' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'unused-patch' | 'missing-tarball-integrity' | 'windows-file-locked'
     | 'profile-file-locked'
-    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key' | 'native-oom' | 'ssh-auth-failed'
+    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key' | 'native-oom' | 'ssh-auth-failed' | 'git-network-failed'
     | 'host-incompatible-install'
     | 'lockfile-broken' | 'lockfile-outdated' | 'pnpm-stalled' | 'profile-write-lock'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
@@ -158,8 +158,9 @@ function withDecodedPnpmDiagnostics(output: string): string {
     const trimmed = line.trim()
     if (!trimmed.startsWith('{')) continue
     try {
-      const event = JSON.parse(trimmed) as { message?: unknown; err?: unknown }
+      const event = JSON.parse(trimmed) as { message?: unknown; diagnostic?: unknown; err?: unknown }
       if (typeof event.message === 'string') messages.push(event.message)
+      if (typeof event.diagnostic === 'string') messages.push(event.diagnostic)
       if (typeof event.err === 'object' && event.err !== null) {
         const message = (event.err as Record<string, unknown>).message
         if (typeof message === 'string') messages.push(message)
@@ -213,6 +214,58 @@ function integrityViolators(diagnostic: string): string[] {
   )
   for (const match of diagnostic.matchAll(listed)) add(match[1])
   return found
+}
+
+const GIT_PROXY_ERROR_RE = /over proxy\s+\S+|Could(?:n't| not) resolve proxy|Received HTTP code \d+ from proxy after CONNECT|Proxy CONNECT aborted/i
+const GIT_NETWORK_ERROR_RE = /Failed to connect to\b|Could(?:n't| not) connect to server|Could(?:n't| not) resolve host|Connection timed out|Operation timed out|Timed out|Connection was reset|Connection refused|Network is unreachable|Recv failure:|Empty reply from server|OpenSSL SSL_connect|gnutls_handshake|schannel:|SSL_ERROR_SYSCALL|SSL connection timeout|Failed receiving HTTP2 data|HTTP\/2 stream \d+ was not closed cleanly/i
+const SAFE_HOST_PORT_RE = /^[A-Za-z0-9._:\[\]-]+$/
+
+function sanitizeHostPort(raw: string): string | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') return undefined
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    try {
+      const host = new URL(trimmed).host
+      return host !== '' && SAFE_HOST_PORT_RE.test(host) ? host : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const withoutUserinfo = trimmed.includes('@') ? trimmed.slice(trimmed.lastIndexOf('@') + 1) : trimmed
+  const hostPort = (withoutUserinfo.split('/')[0] ?? '').replace(/\.+$/, '')
+  return hostPort !== '' && SAFE_HOST_PORT_RE.test(hostPort) ? hostPort : undefined
+}
+
+/**
+ * Parse a git HTTP(S) transport failure (`fatal: unable to access '<url>': …`),
+ * distinguishing proxy failures from direct network failures (#1090).
+ *
+ * Only hostnames/proxy addresses are extracted — never URL credentials or paths.
+ * HTTP status responses (403/404/500) and generic access lines without a
+ * transport error are deliberately left unclassified.
+ */
+function parseGitNetworkFailure(diagnostic: string): { host?: string; proxy?: string; viaProxy: boolean } | null {
+  const match = /fatal:\s+unable to access\s+['"](https?:\/\/[^'"]+)['"]:\s*([^\r\n]+)/i.exec(diagnostic)
+  if (match === null) return null
+  const reason = match[2]!
+  const viaProxy = GIT_PROXY_ERROR_RE.test(reason)
+  if (!viaProxy && !GIT_NETWORK_ERROR_RE.test(reason)) return null
+  let host: string | undefined
+  try {
+    const parsed = new URL(match[1]!).hostname
+    if (parsed !== '' && SAFE_HOST_PORT_RE.test(parsed)) host = parsed
+  } catch {
+    // Malformed URL; omit host rather than echoing raw text.
+  }
+  const rawProxy = viaProxy
+    ? /(?:over proxy|Could(?:n't| not) resolve proxy:)\s+([^\s,'";]+)/i.exec(reason)?.[1]
+    : undefined
+  const proxy = rawProxy === undefined ? undefined : sanitizeHostPort(rawProxy)
+  return {
+    ...(host === undefined ? {} : { host }),
+    ...(proxy === undefined ? {} : { proxy }),
+    viaProxy,
+  }
 }
 
 /**
@@ -914,6 +967,28 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
       code: 'ssh-auth-failed',
       recoverable: false,
       message: 'git 无法在无人值守的情况下完成 SSH 认证。如果你的 SSH key 设了密码，请用 ssh-agent（ssh-add），或自己设置 GIT_SSH_COMMAND 指向你的命令，市场不会覆盖它。 / git could not complete SSH authentication unattended. If your SSH key has a passphrase, use ssh-agent (ssh-add), or set GIT_SSH_COMMAND to your own command — the market leaves yours alone.',
+    }
+  }
+  // #1090: git exited 128 because the remote could not be reached over the
+  // configured proxy or network. Classify it directly so the update route does
+  // not bury the cause behind an unrelated rollback-unavailable warning, and
+  // keep `recoverable: false` so an unreachable local proxy is not blindly
+  // retried as a transient npm hiccup.
+  if (/fatal:\s+unable to access/i.test(output)) {
+    const gitNetwork = parseGitNetworkFailure(withDecodedPnpmDiagnostics(output))
+    if (gitNetwork !== null) {
+      const zhHost = gitNetwork.host === undefined ? '' : `（${gitNetwork.host}）`
+      const enHost = gitNetwork.host === undefined ? '' : ` (${gitNetwork.host})`
+      const message = gitNetwork.viaProxy
+        ? gitNetwork.proxy !== undefined
+          ? `git 无法连接远程仓库${zhHost}：通过代理 ${gitNetwork.proxy} 连接失败，可能是本机代理未启动或地址不可用。请检查代理或网络设置后重试 / git could not reach the remote repository${enHost}: connecting through proxy ${gitNetwork.proxy} failed, likely because the local proxy is not running or is unreachable. Check your proxy or network settings and retry`
+          : `git 无法连接远程仓库${zhHost}：通过代理连接失败，可能是代理未启动、拒绝连接或配置有误。请检查代理或网络设置后重试 / git could not reach the remote repository${enHost}: connecting through the proxy failed, likely because the proxy is not running, refused the connection, or is misconfigured. Check your proxy or network settings and retry`
+        : `git 无法连接远程仓库${zhHost}：网络连接失败或超时。请检查网络连接或代理设置后重试 / git could not reach the remote repository${enHost}: the network connection failed or timed out. Check your network or proxy settings and retry`
+      return {
+        code: 'git-network-failed',
+        recoverable: false,
+        message,
+      }
     }
   }
   if (output.includes('ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED')) {
