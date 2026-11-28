@@ -3,6 +3,7 @@
 import { clearStartupRepairEntry } from './startup-repair-report.ts'
 import { randomUUID } from 'node:crypto'
 import {
+  acceptsManagedAddTarget,
   cancelActive as cancelHostChild,
   progress,
   runHostPnpm,
@@ -21,7 +22,8 @@ import {
   withDeadline,
   type RepairReport,
 } from './pending-updates.ts'
-import { profileDir, readInstalledVersion } from './profile.ts'
+import { githubShortcut, NPM_NAME_RE } from './sources.ts'
+import { profileDir, readInstalledVersion, readProfileManifestSnapshot } from './profile.ts'
 import { activeRegion, DEFAULT_NPM_REGISTRY, routesFor } from './regions.ts'
 
 interface ManagedResult {
@@ -438,6 +440,19 @@ function pinnedGitOrigin(spec: string): string | null {
   return location.replace(/\/+$/, '').replace(/\.git$/i, '').replace(/^[^/]+/, host => host.toLowerCase())
 }
 
+/** Identify one declared subpackage after the manager reports already-installed. */
+function installedGithubSubpackage(spec: string, context?: UpdateContext): string | undefined {
+  const source = githubShortcut(spec)
+  if (source?.subpath == null || context === undefined) return undefined
+  const manifest = readProfileManifestSnapshot(context.profile, context.profileDirectory)
+  const matches = Object.entries(manifest.dependencies).filter(([name, declared]) => {
+    if (!NPM_NAME_RE.test(name) || typeof declared !== 'string') return false
+    const installed = githubShortcut(declared)
+    return installed?.repo.toLowerCase() === source.repo.toLowerCase() && installed.subpath === source.subpath
+  })
+  return matches.length === 1 ? matches[0]![0] : undefined
+}
+
 /** One update the host can do in place, decided before anything is asked of it. */
 interface InPlaceUpdate {
   name: string
@@ -801,13 +816,14 @@ async function installOrReinstall(
     first = { application: 'failed', error }
   }
   if (first.application !== 'failed' || managementCode(first.error) !== 'already-installed') return first
-  const name = registryNameOf(spec)
+  const registryName = registryNameOf(spec)
+  const name = registryName ?? installedGithubSubpackage(spec, context)
   // A refusal we cannot turn into a name is the manager's answer to give.
   if (name === undefined) return first
   // Removing the market would unload this very code before the reinstall runs
   // (#900). Overlay the version with the host's own pnpm instead — no remove.
   if (SELF_NAMES.has(name)) {
-    return updateMarketInPlace(spec, name, options, context)
+    return registryName === undefined ? first : updateMarketInPlace(spec, name, options, context)
   }
   const record = context === undefined
     ? undefined
@@ -1005,7 +1021,7 @@ export function createOfficialDesktopRuntime(
     // Market sends pnpm argv. Only operations representable by the official
     // manager are accepted; silently dropping pnpm flags would change intent.
     const [command, target, ...extra] = argv
-    if (extra.length !== 0 || typeof target !== 'string' || !TARGET_RE.test(target)) {
+    if (extra.length !== 0 || typeof target !== 'string' || !(command === 'add' ? acceptsManagedAddTarget(target) : TARGET_RE.test(target))) {
       // The market's own options are what usually lands here, and they are
       // spelled with a leading `-` — and they sit in the TARGET slot, because
       // the market writes `add <option> <target>`. The OPERATION is supported
@@ -1177,7 +1193,7 @@ export function createOfficialDesktopRuntime(
       cancelHostChild()
       return true
     },
-    supportsExactRollbackTarget: target => TARGET_RE.test(target),
+    supportsExactRollbackTarget: acceptsManagedAddTarget,
     // The reason the flag exists (#732): this manager takes exactly
     // `add <target>` or `remove <target>`, so every recovery step that needs
     // an option has to be left out here rather than sent and refused.

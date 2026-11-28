@@ -242,6 +242,8 @@ describe('Anywhere Labs install boundary (#215, #219, #272)', () => {
   it('reports the exact rollback targets its host boundary can execute', async () => {
     const { service } = boundaryService()
     const restricted = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
+    const subpackage = `github:o/r#${'a'.repeat(40)}&path:/packages/example`
+    expect(restricted.supportsExactRollbackTarget?.(subpackage)).toBe(false)
     expect(restricted.supportsExactRollbackTarget?.('example-plugin@1.2.3')).toBe(true)
     expect(restricted.supportsExactRollbackTarget?.('github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(false)
     expect(restricted.supportsExactRollbackTarget?.('https://github.com/o/r/releases/download/v1.0.0/plugin.tgz')).toBe(false)
@@ -256,6 +258,8 @@ describe('Anywhere Labs install boundary (#215, #219, #272)', () => {
       },
     }, profileFixture(), '/tmp', 10_000)
     expect(ordinary.supportsExactRollbackTarget?.('github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(true)
+    expect(ordinary.supportsExactRollbackTarget?.(subpackage)).toBe(true)
+    expect(ordinary.supportsExactRollbackTarget?.(subpackage + '&path:/other')).toBe(false)
     await ordinary.dispose()
   })
 

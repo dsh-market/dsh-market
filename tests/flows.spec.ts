@@ -159,7 +159,8 @@ const fake = vi.hoisted(() => ({
   calls: [] as string[][],
 }))
 
-vi.mock('../src/dsh-cli.ts', () => {
+vi.mock('../src/dsh-cli.ts', async (importOriginal) => {
+  const { acceptsManagedAddTarget } = await importOriginal<typeof import('../src/dsh-cli.ts')>()
   function writePkg(name: string, manifest: unknown, artifacts: string[] = [], artifactContents: Record<string, string> = {}): void {
     const root = join(fake.profileDir, 'node_modules', name)
     // Replace, do not merge: pnpm swaps the package directory when the
@@ -378,7 +379,9 @@ vi.mock('../src/dsh-cli.ts', () => {
     if (target.startsWith('github:')) {
       const hash = target.indexOf('#')
       const repoKey = hash === -1 ? target : target.slice(0, hash)
-      const commit = hash === -1 ? undefined : target.slice(hash + 1)
+      const selectors = hash === -1 ? [] : target.slice(hash + 1).split('&')
+      const commit = selectors.find(selector => /^[0-9a-f]{40}$/.test(selector))
+      const subpath = selectors.find(selector => selector.startsWith('path:/'))?.slice('path:'.length)
       const repo = fake.repos[target] ?? (hash === -1 ? undefined : fake.repos[repoKey])
       if (repo === undefined) return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown repo ${target}`, cancelled: false }
       const def = commit !== undefined ? repo.byCommit?.[commit] : undefined
@@ -398,7 +401,11 @@ vi.mock('../src/dsh-cli.ts', () => {
       writeDep(repo.name, existingUrl ?? target)
       writePkg(repo.name, def?.manifest ?? repo.manifest, def?.artifacts ?? repo.artifacts)
       const nextCommit = commit ?? repo.lockCommit
-      if (nextCommit !== undefined) writeLockCommit(repoKey.replace(/^github:/, ''), nextCommit)
+      if (nextCommit !== undefined) {
+        const repo = repoKey.slice('github:'.length)
+        if (subpath === undefined) writeLockCommit(repo, nextCommit)
+        else writeGitLockCommit(`https://github.com/${repo}.git`, nextCommit, subpath)
+      }
       // `dsh plugin add` writes the bundle row on this path too — that is
       // where #339 came from, a github-sourced install whose build was
       // blocked. Consuming the flag only in the npm branch below let the
@@ -589,6 +596,7 @@ vi.mock('../src/dsh-cli.ts', () => {
   }
   return {
     TARGET_RE: /^[A-Za-z0-9@:./_#+~^=-]+$/,
+    acceptsManagedAddTarget,
     BOOT_ID: 'test-boot',
     progress: {
       active: false, target: '', startedAt: 0, lastLine: '',
@@ -4748,42 +4756,61 @@ describe('update flow — no npm publishing required', () => {
     expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toContain(NEW)
   })
 
-  it('does not offer a rollback that the real CLI cannot execute for a github subpath', async () => {
-    const OLD = 'a'.repeat(40)
-    const NEW = 'b'.repeat(40)
-    const target = 'github:m/mono#path:/packages/plug-a'
-    fake.repos[target] = {
-      name: 'plug-a', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'],
-    }
-    expect((await bed.dispatch('POST', '/dsh-market/install', {
-      url: 'https://github.com/m/mono/tree/main/packages/plug-a',
-    })).status).toBe(200)
-    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/m/mono/tar.gz/${OLD}}\n`)
-    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
-    mkdirSync(hostPeerDir, { recursive: true })
-    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
-    fake.repos[target] = {
-      name: 'plug-a',
-      manifest: {
-        dsh: {},
-        main: 'index.js',
-        peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' },
-      },
-      artifacts: ['index.js'],
-      lockCommit: NEW,
-    }
-
-    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-a' })
-
-    expect(updated.status).toBe(200)
-    expect(updated.json.compatibility).toMatchObject({
-      code: 'soft-incompatible',
-      rollbackUnavailable: expect.stringMatching(/subpath.*unavailable/i),
+  it('hands desktop the new commit and the same GitHub subdirectory on a market update', async () => {
+    const old = 'a'.repeat(40)
+    const next = 'b'.repeat(40)
+    const spec = (commit: string) => `github:m/mono#${commit}&path:/packages/editor`
+    const before = { name: 'editor', manifest: { name: 'editor', version: '1.0.0', dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    fake.repos[spec(old)] = before
+    fake.repos[spec(next)] = { ...before, manifest: { ...before.manifest, version: '1.1.0' } }
+    await runDshPlugin('web', ['add', spec(old)])
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(`001e# service=git-upload-pack\n00000155${next} HEAD\0multi_ack\n0000`)))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: runDshPlugin,
+      acceptsMarketPnpmFlags: false,
+      probePnpm: async () => true,
+      provisionPnpm: async () => ({ ok: true }),
+      cancelActive: () => false,
     })
-    expect(String(updated.json.compatibility.rollbackUnavailable)).toContain(OLD)
-    expect(String(updated.json.compatibility.rollbackUnavailable)).toContain(' / ')
-    expect(updated.json.compatibility.rollbackId).toBeUndefined()
-    expect(fake.calls.flat().some(arg => arg.includes(`${OLD}&path:`))).toBe(false)
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'editor' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(fake.calls.at(-1)).toEqual(['add', spec(next)])
+    expect(installedSpec('editor')).toBe(spec(next))
+  })
+
+  it.each(['partial write', 'network'])('restores a pinned GitHub subpackage after %s failure, then updates it from the market', async failure => {
+    const old = 'a'.repeat(40)
+    const latest = 'b'.repeat(40)
+    const target = 'github:m/mono#path:/packages/plug-a'
+    const pinned = `github:m/mono#${old}&path:/packages/plug-a`
+    const oldBuild = { name: 'plug-a', manifest: { name: 'plug-a', version: '1.0.0', dsh: {}, main: 'index.js' }, artifacts: ['index.js'], lockCommit: old }
+    fake.repos[target] = oldBuild
+    fake.repos[pinned] = oldBuild
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/m/mono/tree/main/packages/plug-a' })).status).toBe(200)
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies['plug-a'] = pinned
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const installed = join(fake.profileDir, 'node_modules', 'plug-a', 'package.json')
+    fake.repos[target] = { ...oldBuild, manifest: { ...oldBuild.manifest, version: '2.0.0' }, lockCommit: latest }
+    if (failure === 'network') {
+      fake.failNextAddStderrOnce = 'ERR_PNPM_FETCH_503 service unavailable'
+      fake.failNextAddStderrTimes = 2
+    } else {
+      fake.failAfterWriteStderrOnce = 'install stopped after materializing the new package'
+    }
+    const failed = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-a' })
+    expect(failed.status).toBe(502)
+    expect(fake.calls.at(-1)).toContain(pinned)
+    expect(installedSpec('plug-a')).toBe(pinned)
+    expect(JSON.parse(readFileSync(installed, 'utf8')).version).toBe('1.0.0')
+
+    const retried = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-a' })
+    expect(retried.status, JSON.stringify(retried.json)).toBe(200)
+    expect(installedSpec('plug-a')).toBe(target)
+    expect(JSON.parse(readFileSync(installed, 'utf8')).version).toBe('2.0.0')
+    expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toContain(latest)
   })
 
   it('refuses an update while any agent is running, before pnpm is touched', async () => {
@@ -5740,7 +5767,7 @@ describe('update flow — no npm publishing required', () => {
       artifacts: ['lib/index.js'],
       lockCommit: NEW,
       byCommit: {
-        [OLD]: { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        [OLD]: { manifest: { name: 'dsh-loop', version: '0.0.1', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
       },
     }
 
@@ -5811,7 +5838,7 @@ describe('update flow — no npm publishing required', () => {
       artifacts: ['lib/index.js'],
       lockCommit: NEW,
       byCommit: {
-        [OLD]: { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        [OLD]: { manifest: { name: 'dsh-loop', version: '0.0.1', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
       },
     }
 
