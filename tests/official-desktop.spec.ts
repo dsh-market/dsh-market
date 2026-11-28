@@ -52,7 +52,7 @@ const name = at === -1 ? spec : spec.slice(0, at)
 const version = at === -1 ? '0.0.0' : spec.slice(at + 1)
 const pkg = join(${JSON.stringify(dir)}, 'node_modules', name)
 mkdirSync(pkg, { recursive: true })
-writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name, version }))
+writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name, version, dsh: { bundle: { patch: 'cordis.patch.yml' } } }))
 `
   return { command: process.execPath, args: ['-e', body], env: {} }
 }
@@ -432,17 +432,22 @@ describe('official Electron profile runtime', () => {
     }
   })
 
-  it('overlays the market with the host pnpm and never removes it (#982, #900)', async () => {
+  it.each([false, true])('overlays the market with the host pnpm and never removes it (updateBundle available: %s)', async canUpdate => {
     const dir = profile()
     installed(dir, 'dshmarket', '1.66.36')
-    const service = manager()
+    const updateBundle = vi.fn()
+    const service = {
+      ...manager(),
+      ...(canUpdate ? { updateBundle, listBundles: async () => [{ name: 'dshmarket', version: '1.66.36', update: 'registry' as const }] } : {}),
+    }
     service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
     const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, hostPnpmThatAdds(dir))
     try {
       const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
       expect(result.exitCode).toBe(0)
       expect(service.removeBundle).not.toHaveBeenCalled()
-      expect(service.installBundle).toHaveBeenCalledTimes(1)
+      expect(updateBundle).not.toHaveBeenCalled()
+      expect(service.installBundle).toHaveBeenCalledTimes(canUpdate ? 0 : 1)
       expect(JSON.parse(readFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), 'utf8')).version).toBe('1.66.48')
     } finally {
       await runtime.dispose()

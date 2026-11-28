@@ -59,8 +59,8 @@ report "e2e passed" for a run that asserted nothing. Browser download can use a 
 profile called `desktop`, which the host refuses to boot. `launchMarketScaffold
 ({ officialDesktop: true })` gets the same code path anyway — the market's own
 config names the profile `desktop` and `profiles/desktop` is a symlink to the
-real one — so installs, updates and removals go through `ctx.get('pluginManager')`
-instead of a pnpm the market spawns. `selfVersions: [a, b]` installs the market
+real one — so ordinary plugin changes go through `ctx.get('pluginManager')`.
+`selfVersions: [a, b]` installs the market
 itself from the fixture registry at `a` and publishes `b`, which is how a spec
 updates the market from inside itself.
 
@@ -72,6 +72,9 @@ the same profile. On hosts that support a live update, the fixture must report
 the new version in the same process, whether the market uses remove-then-install
 or the host's `updateBundle` method. Run the spec against one host with
 `DSHM_E2E_DSH=<dsh bin> npm run test:web -- tests/web/desktop-update.e2e.ts`.
+When testing with the official Desktop CLI that supplies its own pnpm, set
+`DSHM_E2E_DESKTOP_PNPM=1`. The self-update cases then check that failed
+installs leave the old market serving and that the next start loads a successful update.
 
 ## The one check no lane can run: provisioning pnpm
 

@@ -1,12 +1,10 @@
 /**
- * The official desktop runtime updates through the host's own `updateBundle`
- * (dsh 0.2.2+) and keeps the market's remove-then-install pair for hosts that
- * lack it (0.2.1). Every assertion here is one a runtime that always took the
- * old path would fail: the in-place call is counted, and remove/install are
- * asserted ABSENT on the new path and PRESENT on the old one.
+ * The official desktop runtime updates other plugins through the host's
+ * `updateBundle` (dsh 0.2.2+) or remove-then-install (0.2.1). Neither is
+ * safe for the running market: it must remain installed if an update fails.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,17 +34,17 @@ afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-/** A profile directory with `example` installed at 1.0.0, the way pnpm leaves it. */
-function profile(version = '1.0.0'): string {
+/** A profile directory with an installed bundle, the way pnpm leaves it. */
+function profile(version = '1.0.0', name = 'example'): string {
   const dir = mkdtempSync(join(tmpdir(), 'dshm-official-update-'))
   roots.push(dir)
   writeFileSync(join(dir, 'package.json'), JSON.stringify({
-    dependencies: { example: version },
-    dsh: { profile: { bundles: ['example'] } },
+    dependencies: { [name]: version },
+    dsh: { profile: { bundles: [name] } },
   }))
-  const packageDir = join(dir, 'node_modules', 'example')
+  const packageDir = join(dir, 'node_modules', name)
   mkdirSync(packageDir, { recursive: true })
-  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: 'example', version, dsh: { bundle: {} } }))
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, version, dsh: { bundle: {} } }))
   return dir
 }
 
@@ -71,6 +69,16 @@ function host(options: { rows?: ManagedBundleRow[]; update?: ReturnType<typeof v
 
 const alreadyInstalled = { application: 'failed', error: { code: 'already-installed' } }
 const journalOf = (dir: string): PendingUpdateJournal => new PendingUpdateJournal(pendingUpdatesFile(dir))
+
+/** A launcher pnpm stand-in: capture the install arguments and place the supplied package in the profile. */
+function overlayInstalling(manifest: object) {
+  const script = `
+    const { writeFileSync } = require('node:fs')
+    writeFileSync('overlay-args.json', JSON.stringify(process.argv.slice(2)))
+    writeFileSync('node_modules/dshmarket/package.json', process.argv[1])
+  `
+  return { command: process.execPath, args: ['-e', script, JSON.stringify(manifest)], env: {} }
+}
 
 describe('an update through the host\'s updateBundle (dsh 0.2.2+)', () => {
   it('is ONE manager call, with no removal and no install of its own', async () => {
@@ -285,68 +293,208 @@ describe('what stays on the remove-then-install path even on a new host', () => 
 
 describe('the market updating itself', () => {
   const market = (name: string) => row({ name })
+  const target = { name: 'dshmarket', version: '2.0.0', dsh: { bundle: { patch: 'cordis.patch.yml' } } }
 
-  it.each(['dshmarket', 'dsh-market'])('goes through the host too (%s), and the result says the running market was replaced', async name => {
-    // With HMR the host removes the running bundle before it installs the new
-    // one, so the instance that asked is disposed by the time the call answers.
-    // The route has to know, or it asks the dead instance for services and
-    // turns a finished update into a 500 (measured on a real host).
-    const service = host({ rows: [market(name)] })
-    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
-    try {
-      const result = await runtime.runPlugin('desktop', ['add', `${name}@2.0.0`])
-      expect(result.exitCode).toBe(0)
-      expect(result.selfSwapped).toBe(true)
-      expect(service.updateBundle).toHaveBeenCalledWith(name, '2.0.0', { requestId: expect.any(String) })
-      expect(service.removeBundle).not.toHaveBeenCalled()
-      expect(service.installBundle).not.toHaveBeenCalled()
-    } finally {
-      await runtime.dispose()
-    }
-  })
-
-  it('is NOT flagged as replaced when the host installed over it without HMR (it is still running)', async () => {
-    const service = host({
-      rows: [market('dshmarket')],
-      update: vi.fn(async () => updated({ result: { application: 'restart-required', changed: true, stage: 'enable', target: 'dshmarket', packageResult: { exitCode: 0, output: 'done' } } })),
-    })
-    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
-    try {
-      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
-      expect(result.exitCode).toBe(0)
-      expect(result.selfSwapped).toBeUndefined()
-    } finally {
-      await runtime.dispose()
-    }
-  })
-
-  it('a new build that cannot start: the host put the old market back, and the dead instance still answers from the result', async () => {
-    const service = host({
-      rows: [market('dshmarket')],
-      update: vi.fn(async () => updated({
-        result: { application: 'failed', changed: false, stage: 'enable', target: 'dshmarket', error: { code: 'operation-error', diagnostic: 'bundle patch cannot load' } },
-        restore: { application: 'applied' },
+  it('refuses a registry target the host marks incompatible before starting pnpm', async () => {
+    const dir = profile('1.0.0', target.name)
+    const pkg = join(dir, 'node_modules', target.name, 'package.json')
+    const before = readFileSync(pkg, 'utf8')
+    const service = {
+      ...host({ rows: [market(target.name)] }),
+      listVersions: vi.fn(async () => ({
+        status: 'listed' as const, registry: 'https://registry.example/npm', versions: [{
+          version: target.version, bundle: true,
+          incompatible: { name: target.name, version: target.version, runtimeVersion: '0.2.2', requirements: { 'engines.dsh': '>=1' } },
+        }],
       })),
-    })
-    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    }
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, overlayInstalling(target))
     try {
       const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
-      expect(result.exitCode).not.toBe(0)
-      expect(result.selfSwapped).toBe(true)
-      expect(result.wroteNothing).toBe(true)
-      expect(result.stderr).toContain('旧版本已经装回')
+      expect(result.refusalCode).toBe('incompatible-version')
+      expect(existsSync(join(dir, 'overlay-args.json'))).toBe(false)
+      expect(readFileSync(pkg, 'utf8')).toBe(before)
+      expect(journalOf(dir).list()).toEqual([])
     } finally {
       await runtime.dispose()
     }
   })
 
-  it('a host without updateBundle (0.2.1) keeps the market\'s own overlay and never removes it (#900, #982)', async () => {
-    const service = host({ update: null, rows: [market('dshmarket')] })
+  it('keeps a newer build installed from Settings while the market was looking up its target', async () => {
+    const dir = profile('1.0.0', target.name)
+    const pkg = join(dir, 'node_modules', target.name, 'package.json')
+    const service = {
+      ...host({ rows: [market(target.name)] }),
+      listVersions: async () => {
+        writeFileSync(pkg, JSON.stringify({ ...target, version: '3.0.0' }))
+        return { status: 'listed' as const, registry: null, versions: [target] }
+      },
+    }
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, overlayInstalling(target))
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
+      expect(result.wroteNothing).toBe(true)
+      expect(existsSync(join(dir, 'overlay-args.json'))).toBe(false)
+      expect(JSON.parse(readFileSync(pkg, 'utf8')).version).toBe('3.0.0')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('saves the exact registry version using the registry that answered the host check', async () => {
+    vi.stubEnv('DSHM_NPM_MIRROR', 'https://first.example/npm')
+    const dir = profile('1.0.0', target.name)
+    const registry = 'https://fallback.example/npm'
+    const service = {
+      ...host({ rows: [market(target.name)] }),
+      listVersions: vi.fn(async () => ({
+        status: 'listed' as const, registry, versions: [{ version: target.version, bundle: true }],
+      })),
+    }
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, overlayInstalling(target))
+    try {
+      await expect(runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])).resolves.toMatchObject({ exitCode: 0 })
+      expect(service.listVersions).toHaveBeenCalledWith('dshmarket', { registry: 'https://first.example/npm' })
+      const args = JSON.parse(readFileSync(join(dir, 'overlay-args.json'), 'utf8'))
+      expect(args).toEqual(expect.arrayContaining(['add', 'dshmarket@2.0.0', '--save-exact', `--registry=${registry}`]))
+      expect(service.updateBundle).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('never starts pnpm if the user cancels while the host is looking up the target', async () => {
+    const dir = profile('1.0.0', target.name)
+    let finishLookup!: () => void
+    const gate = new Promise<void>(resolve => { finishLookup = resolve })
+    const service = {
+      ...host({ rows: [market(target.name)] }),
+      listVersions: vi.fn(async () => {
+        await gate
+        return { status: 'listed' as const, registry: null, versions: [{ version: target.version, bundle: true }] }
+      }),
+    }
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, overlayInstalling(target))
+    try {
+      const update = runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
+      await vi.waitFor(() => expect(service.listVersions).toHaveBeenCalled())
+      expect(runtime.cancelActive()).toBe(true)
+      finishLookup()
+      await expect(update).resolves.toMatchObject({ cancelled: true })
+      expect(existsSync(join(dir, 'overlay-args.json'))).toBe(false)
+    } finally {
+      finishLookup()
+      await runtime.dispose()
+    }
+  })
+
+  it('leaves the profile and its live writer alone when starting an overlay', async () => {
+    const dir = profile('1.0.0', target.name)
+    const lock = join(dir, 'package.json.lock')
+    const owner = `${process.pid}\n`
+    writeFileSync(lock, owner)
+    const service = host({ rows: [market(target.name)] })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, overlayInstalling(target))
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
+      expect(result).toMatchObject({ exitCode: 1, wroteNothing: true })
+      expect(existsSync(join(dir, 'overlay-args.json'))).toBe(false)
+      expect(readFileSync(lock, 'utf8')).toBe(owner)
+      expect(service.updateBundle).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it.each([{ ...target, name: 'unexpected' }, { name: target.name, version: target.version }])(
+    'rejects a package with the target version but the wrong identity or no bundle declaration (%j)', async manifest => {
+      const dir = profile('1.0.0', target.name)
+      const service = host({ rows: [market(target.name)] })
+      const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, overlayInstalling(manifest))
+      try {
+        const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
+        expect(result.exitCode).not.toBe(0)
+        expect(service.updateBundle).not.toHaveBeenCalled()
+      } finally {
+        await runtime.dispose()
+      }
+    })
+
+  it.each(['dshmarket', 'dsh-market'])('preserves the installed %s when its replacement cannot be installed (#1328)', async name => {
+    const from = '1.84.2'
+    const to = '1.85.0'
+    const dir = profile(from, name)
+    const manifest = join(dir, 'package.json')
+    const packageDir = join(dir, 'node_modules', name)
+    // Model Desktop successfully removing the running market, then failing
+    // both the install and its rollback. A missing market cannot replay its journal.
+    const service = host({
+      rows: [row({ name, version: from })],
+      update: vi.fn(async () => {
+        writeFileSync(manifest, JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: [] } } }))
+        rmSync(packageDir, { recursive: true })
+        const failure = { application: 'failed', stage: 'install', changed: false, target: name, error: { code: 'operation-error' } }
+        return updated({ from, to, step: 'install', result: failure, restore: failure })
+      }),
+    })
+    service.installBundle.mockResolvedValue(alreadyInstalled as never)
+    const pnpm = { command: process.execPath, args: ['-e', 'process.exit(1)'], env: {} }
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, pnpm)
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', `${name}@${to}`])
+      expect(result.exitCode).not.toBe(0)
+      const pkgFile = join(packageDir, 'package.json')
+      expect({
+        profile: JSON.parse(readFileSync(manifest, 'utf8')),
+        version: existsSync(pkgFile) ? JSON.parse(readFileSync(pkgFile, 'utf8')).version : null,
+        pending: journalOf(dir).list().map(({ from, to, step }) => ({ from, to, step })),
+        repairOnRestart: result.repairOnRestart,
+      }).toEqual({
+        profile: { dependencies: { [name]: from }, dsh: { profile: { bundles: [name] } } },
+        version: from,
+        pending: [],
+        repairOnRestart: undefined,
+      })
+      expect(service.updateBundle).not.toHaveBeenCalled()
+      expect(service.removeBundle).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it.each(['0.2.1', '0.2.2+'])('gives a manual recovery hint on %s when the host has no overlay pnpm', async version => {
+    const name = 'dshmarket'
+    const dir = profile('1.0.0', name)
+    const service = host({ rows: [market(name)], ...(version === '0.2.1' ? { update: null } : {}) })
     service.installBundle.mockResolvedValueOnce(alreadyInstalled as never)
-    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir)
     try {
       const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
       expect(result.refusalCode).toBe('market-self-update')
+      expect(result.stderr).toContain('pnpm add dshmarket@2.0.0')
+      expect(result.repairOnRestart).toBeUndefined()
+      expect(service.installBundle).toHaveBeenCalledTimes(1)
+      if (service.updateBundle) expect(service.updateBundle).not.toHaveBeenCalled()
+      expect(service.removeBundle).not.toHaveBeenCalled()
+      expect(journalOf(dir).list()).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('lets a host without launcher pnpm install over the existing registry bundle when supported', async () => {
+    const dir = profile('1.0.0', 'dshmarket')
+    const service = host({ rows: [market('dshmarket')] })
+    service.installBundle.mockImplementationOnce(async () => {
+      writeFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), JSON.stringify({ name: 'dshmarket', version: '2.0.0' }))
+      return { ...ok }
+    })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir)
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
+      expect(result.exitCode).toBe(0)
+      expect(service.installBundle).toHaveBeenCalledWith('dshmarket@2.0.0', { requestId: expect.any(String) })
+      expect(service.updateBundle).not.toHaveBeenCalled()
       expect(service.removeBundle).not.toHaveBeenCalled()
     } finally {
       await runtime.dispose()
@@ -394,22 +542,6 @@ describe('every way the in-place update can fail says what happened and what to 
       await expect(runtime.runPlugin('desktop', ['add', 'example@2.0.0'])).resolves.toMatchObject({ exitCode: 0 })
       expect(service.updateBundle).toHaveBeenCalledTimes(1)
       expect(service.removeBundle).toHaveBeenCalledWith('example')
-    } finally {
-      await runtime.dispose()
-    }
-  })
-
-  it('the market itself: a check that finds no bundle falls back to the overlay, never to a removal', async () => {
-    const service = host({
-      rows: [row({ name: 'dshmarket' })],
-      update: vi.fn(async () => updated({ step: 'check', result: failed({ target: 'dshmarket', error: { code: 'not-bundle' } }) })),
-    })
-    service.installBundle.mockResolvedValueOnce(alreadyInstalled as never)
-    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
-    try {
-      await runtime.runPlugin('desktop', ['add', 'dshmarket@2.0.0'])
-      expect(service.updateBundle).toHaveBeenCalledTimes(1)
-      expect(service.removeBundle).not.toHaveBeenCalled()
     } finally {
       await runtime.dispose()
     }
@@ -549,6 +681,44 @@ describe('a Git bundle', () => {
       await expect(runtime.runPlugin('desktop', ['add', `github:o/r#${sha2}`])).resolves.toMatchObject({ exitCode: 0 })
       expect(gitVersionAt).toHaveBeenCalledWith(`github:o/r#${sha2}`)
       expect(service.updateBundle).toHaveBeenCalledWith('gitplug', '1.1.0', { requestId: expect.any(String), spec: `github:o/r#${sha2}` })
+      expect(service.installBundle).not.toHaveBeenCalled()
+      expect(service.removeBundle).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('protects a market installed from Git and verifies the version at the requested commit (#1328)', async () => {
+    const dir = profile('1.0.0', 'dshmarket')
+    const service = host({ rows: [{ ...gitRow(), name: 'dshmarket' }] })
+    // The overlay exits successfully but leaves the old version on disk.
+    const pnpm = overlayInstalling({ name: 'dshmarket', version: '1.0.0', dsh: { bundle: {} } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, pnpm, { gitVersionAt: async () => '1.1.0' })
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', `github:o/r#${sha2}`])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr).toContain('1.1.0')
+      const args = JSON.parse(readFileSync(join(dir, 'overlay-args.json'), 'utf8'))
+      expect(args).toContain(`github:o/r#${sha2}`)
+      expect(args).not.toContain('--save-exact')
+      expect(service.updateBundle).not.toHaveBeenCalled()
+      expect(service.removeBundle).not.toHaveBeenCalled()
+      expect(journalOf(dir).list()).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('preserves the pinned Git source in the manual hint when the market cannot overlay it', async () => {
+    const dir = profile('1.0.0', 'dshmarket')
+    const service = host({ rows: [{ ...gitRow(), name: 'dshmarket' }] })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, null, { gitVersionAt: async () => '1.1.0' })
+    const spec = `github:o/r#${sha2}`
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', spec])
+      expect(result.refusalCode).toBe('market-self-update')
+      expect(result.stderr).toContain(spec)
+      expect(service.updateBundle).not.toHaveBeenCalled()
       expect(service.installBundle).not.toHaveBeenCalled()
       expect(service.removeBundle).not.toHaveBeenCalled()
     } finally {

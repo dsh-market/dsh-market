@@ -69,7 +69,7 @@ export class PendingCheckoutLinks {
  * Claim the same exclusive profile writer lock as rc.3's plugin manager.
  * An occupied lock is left for the host to release or take over.
  */
-export function withIdleProfile<T>(profileDirectory: string, action: () => T): T | null {
+function claimProfileWriter(profileDirectory: string): (() => void) | null {
   const lock = join(profileDirectory, 'package.json.lock')
   let descriptor: number
   try {
@@ -79,12 +79,39 @@ export function withIdleProfile<T>(profileDirectory: string, action: () => T): T
     if (code === 'EEXIST' || (code === 'EPERM' && lstatSync(lock, { throwIfNoEntry: false }) !== undefined)) return null
     throw error
   }
-  try {
-    writeFileSync(descriptor, `${process.pid}\n`)
-    return action()
-  } finally {
+  const release = (): void => {
     closeSync(descriptor)
     unlinkSync(lock)
+  }
+  try {
+    writeFileSync(descriptor, `${process.pid}\n`)
+  } catch (error) {
+    release()
+    throw error
+  }
+  return release
+}
+
+export function withIdleProfile<T>(profileDirectory: string, action: () => T): T | null {
+  const release = claimProfileWriter(profileDirectory)
+  if (release === null) return null
+  try {
+    return action()
+  } finally {
+    release()
+  }
+}
+
+/** Hold the same lock until the package write settles, including on cancellation. */
+export async function withIdleProfileAsync<T>(profileDirectory: string, action: () => Promise<T>): Promise<T | null> {
+  const release = claimProfileWriter(profileDirectory)
+  if (release === null) return null
+  try {
+    // A previous host can leave pnpm running after it releases the writer lock.
+    if (hasUnsettledPackageRun(profileDirectory)) return null
+    return await action()
+  } finally {
+    release()
   }
 }
 
