@@ -3821,6 +3821,84 @@ describe('update flow — no npm publishing required', () => {
     expect(after.dsh?.profile?.bundles).toContain('dsh-loop')
   })
 
+  it('restores the row when the market updating itself was cancelled by its own unload (#1323)', async () => {
+    // The self-update runs inside the host's updateBundle, whose remove step
+    // takes this package's row out and then reloads the market — which
+    // disposes the very instance running the request. The teardown cancels the
+    // run, so without this the refusal arrives on a cancelled operation, the
+    // restore is skipped, and the market never loads again after the restart
+    // its own failed update forced.
+    advanceNpmLatest('1.2.0')
+    const seeded = readManifestAt(fake.profileDir)
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      ...seeded,
+      dsh: { ...seeded.dsh, profile: { ...seeded.dsh?.profile, bundles: ['dsh-loop'] } },
+    }))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (_profile, args) => {
+        if (args[0] === 'add') {
+          const manifestPath = join(fake.profileDir, 'package.json')
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+          manifest.dsh!.profile!.bundles = []
+          writeFileSync(manifestPath, JSON.stringify(manifest))
+          return {
+            exitCode: 1, timedOut: false, stdout: '', cancelled: true, cancelledByUnload: true,
+            wroteNothing: true, refusalCode: 'bundle-in-use',
+            stderr: '这个插件正在使用中，桌面端不允许现在移除 / the plugin is in use (bundle-in-use)',
+          }
+        }
+        return { exitCode: 0, timedOut: false, stdout: '', stderr: '', cancelled: false }
+      },
+      acceptsMarketPnpmFlags: false,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    // A cancelled run answers quietly; what matters is the profile.
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ ok: false, cancelled: true })
+    const after = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    expect(after.dsh?.profile?.bundles).toContain('dsh-loop')
+  })
+
+  it('writes nothing on a cancel the user asked for (#1323)', async () => {
+    // The unload exception above is exactly that: an exception. A run the user
+    // stopped leaves the profile to itself — the market cannot tell what the
+    // host finished before it stopped, and a quiet cancel must stay quiet.
+    advanceNpmLatest('1.2.0')
+    const seeded = readManifestAt(fake.profileDir)
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      ...seeded,
+      dsh: { ...seeded.dsh, profile: { ...seeded.dsh?.profile, bundles: ['dsh-loop'] } },
+    }))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (_profile, args) => {
+        if (args[0] === 'add') {
+          const manifestPath = join(fake.profileDir, 'package.json')
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+          manifest.dsh!.profile!.bundles = []
+          writeFileSync(manifestPath, JSON.stringify(manifest))
+          return { exitCode: 1, timedOut: false, stdout: '', stderr: '', cancelled: true, wroteNothing: true }
+        }
+        return { exitCode: 0, timedOut: false, stdout: '', stderr: '', cancelled: false }
+      },
+      acceptsMarketPnpmFlags: false,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    const after = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    expect(after.dsh?.profile?.bundles).not.toContain('dsh-loop')
+  })
+
   it('answers RESTART_REQUIRED, keeps the dropped row, and says what to do when the host wants a restart first (#1253)', async () => {
     advanceNpmLatest('1.2.0')
     const seeded = readManifestAt(fake.profileDir)

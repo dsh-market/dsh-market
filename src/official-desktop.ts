@@ -971,7 +971,7 @@ export function createOfficialDesktopRuntime(
   // True only while the self-update overlay runs its own pnpm child: the one
   // operation this instance, and nobody else, has to stop and wait for.
   let ownsChild = false
-  let active: { requestId?: string; cancelled: boolean; done: Promise<InstallResult> } | undefined
+  let active: { requestId?: string; cancelled: boolean; unloaded: boolean; done: Promise<InstallResult> } | undefined
   const directory = safeProfileDirectory(profileName, _profileDirectory)
   const journal = directory === undefined ? undefined : PendingUpdateJournal.forProfile(directory)
   const updateContext: UpdateContext | undefined = directory === undefined || journal === undefined
@@ -1068,7 +1068,7 @@ export function createOfficialDesktopRuntime(
       progress.active = false
       return Promise.resolve(failure(detail(error), 127))
     }
-    const current = { requestId, cancelled: false, done: Promise.resolve(failure('not started')) }
+    const current = { requestId, cancelled: false, unloaded: false, done: Promise.resolve(failure('not started')) }
     active = current
     const flight: RunningOperation = { done: current.done }
     setRunningOperation(flight)
@@ -1106,6 +1106,10 @@ export function createOfficialDesktopRuntime(
         stdout: output,
         stderr: message,
         cancelled: current.cancelled || result.application === 'cancelled',
+        // Who stopped it decides what may still be written (#1323): the
+        // market's own unload runs inside the host's remove step, which has
+        // already taken this package's `dsh.profile.bundles` row out.
+        ...(current.unloaded ? { cancelledByUnload: true } : {}),
         // No package result means the manager stopped before it ran pnpm: the
         // profile is untouched, and the route must not try to "restore" it.
         // A pre-install host check (#912) is the same shape even when the
@@ -1167,9 +1171,12 @@ export function createOfficialDesktopRuntime(
     packageWritesSettled: () => pendingManagerWrites().size === 0,
     probePnpm: async () => managerLookup() !== undefined,
     provisionPnpm: async () => ({ ok: managerLookup() !== undefined, hint: 'Use the official desktop plugin manager' }),
-    cancelActive: () => {
+    cancelActive: (cause) => {
       if (active === undefined) return false
       active.cancelled = true
+      // Remembered separately from `cancelled`: an unload is the host taking
+      // this very bundle out, and the route still has to put its row back.
+      if (cause === 'market-unloaded') active.unloaded = true
       progress.cancelling = true
       const manager = managerLookup()
       if (active.requestId !== undefined && manager !== undefined) void manager.cancelInstall(active.requestId).catch(() => {})

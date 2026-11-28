@@ -764,7 +764,7 @@ export function mountMarketRoutes(
     journal: drainJournal,
     bootId: BOOT_ID,
     log: (level, event, detail) => logEvent(level, event, detail),
-    abortMutation: () => commands.cancelActive(),
+    abortMutation: cause => commands.cancelActive(cause),
   })
   /**
    * Whether this host runs pnpm itself and so takes the market's own options
@@ -8093,7 +8093,16 @@ export function mountMarketRoutes(
             // successful install of it lands on a row that is not there.
             // Gated on the package still being on disk: a removal that really
             // happened has nothing to restore.
-            if (!ok && !cancelled && (result.refusalCode === 'bundle-in-use' || existsSync(join(activeProfileDir, 'node_modules', name, 'package.json'))) && (checkoutSource === null || rollbackOk)) {
+            //
+            // #1323 (self-update): `cancelled` is not always the user saying
+            // "leave it alone". The market updating ITSELF is unloaded from
+            // inside the host's remove step — the step that already wrote its
+            // row out — so this very run is marked cancelled, and the refusal
+            // then landed on a run the gate below skipped. The row stayed
+            // gone, and the market did not load after the restart that its own
+            // failed update had just forced. An unload may write here; a user
+            // cancel still leaves the profile untouched.
+            if (!ok && (!cancelled || result.cancelledByUnload === true) && (result.refusalCode === 'bundle-in-use' || existsSync(join(activeProfileDir, 'node_modules', name, 'package.json'))) && (checkoutSource === null || rollbackOk)) {
               const targetRowDropped = bundlesDroppedFromProfile(
                 manifestBefore, config.profile, activeProfileDir,
                 new Set(removedDeclaration === null ? [] : [removedDeclaration.name]),

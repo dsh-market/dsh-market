@@ -509,8 +509,20 @@ export interface InstallResult {
   timedOut: boolean
   stdout: string
   stderr: string
-  /** True when the run ended because the user cancelled it. */
+  /** True when the run ended because it was cancelled. */
   cancelled: boolean
+  /**
+   * The cancellation came from the market being unloaded, not from the user
+   * pressing Cancel.
+   *
+   * The difference decides whether the profile may still be written after the
+   * run: a user cancel means "leave it alone", while an unload during the
+   * market's own update happens inside the host's remove step — the step that
+   * writes the `dsh.profile.bundles` row out BEFORE it decides to refuse — so
+   * the row the market needs to load on the next boot is already gone by the
+   * time this flag is set (#1323).
+   */
+  cancelledByUnload?: boolean
   /** Desktop's generation-wide package-operation gate rejected the start. */
   busy?: boolean
   /**
@@ -599,12 +611,23 @@ export interface InstallResult {
 /** The shape every orchestration function takes to run plugin commands (injectable in tests). */
 export type PluginRunner = (profile: string, pluginArgs: string[]) => Promise<InstallResult>
 
+/** Why a running package command is being stopped. */
+export type PluginCancelCause = 'user' | 'market-unloaded'
+
 /** Package-operation boundary consumed by the HTTP route layer. */
 export interface PluginCommandRuntime {
   runPlugin: PluginRunner
   probePnpm(): Promise<boolean>
   provisionPnpm(): Promise<{ ok: boolean; hint?: string }>
-  cancelActive(): boolean
+  /**
+   * Stop the running package command.
+   * @param cause - who is stopping it. The default is a user cancel, which
+   * leaves the profile alone; `market-unloaded` is the market's own teardown
+   * and lets the update route put back the bundle row the host's removal step
+   * took out (#1323).
+   * @returns whether there was a command to stop.
+   */
+  cancelActive(cause?: PluginCancelCause): boolean
   /** Whether this host can execute an immutable rollback add target. */
   supportsExactRollbackTarget?(target: string): boolean
   /**

@@ -19,6 +19,7 @@
  */
 
 import { drainableAgent, type DrainableAgent } from './agents.ts'
+import type { PluginCancelCause } from './dsh-cli.ts'
 import { redactHomePaths } from './log-redaction.ts'
 
 export type DrainKind = 'install' | 'update' | 'uninstall'
@@ -230,8 +231,13 @@ export interface DrainCoordinatorOptions {
   now?: () => number
   maxRetained?: number
   log?: (level: 'info' | 'warn' | 'error', event: string, detail: string) => void
-  /** Stop the package command when a hold is lost mid-mutation. */
-  abortMutation?: () => boolean
+  /**
+   * Stop the package command. The cause is passed through to the runtime: a
+   * user cancel leaves the profile alone, while the market being unloaded is
+   * the one cancellation after which the update route still puts back a
+   * bundle row the host's removal step dropped (#1323).
+   */
+  abortMutation?: (cause?: PluginCancelCause) => boolean
 }
 
 const MAX_RETAINED = 50
@@ -296,7 +302,7 @@ export class DrainCoordinator {
   private readonly now: () => number
   private readonly maxRetained: number
   private readonly log: NonNullable<DrainCoordinatorOptions['log']>
-  private readonly abortMutation: (() => boolean) | undefined
+  private readonly abortMutation: NonNullable<DrainCoordinatorOptions['abortMutation']> | undefined
   private readonly operations = new Map<string, Operation>()
   private readonly holds = new Map<string, Hold>()
   /** New Agents still inside their factory's maintenance, claimed when it ends. */
@@ -519,7 +525,7 @@ export class DrainCoordinator {
     operation.cancelRequested = true
     this.notifyActivity()
     if (operation.state === 'running' || operation.state === 'verifying') {
-      this.abortMutation?.()
+      this.abortMutation?.('user')
       this.notify(operation)
       return true
     }
@@ -574,7 +580,7 @@ export class DrainCoordinator {
       // holds and the Agent subscription in place until the drain loop's
       // finally runs: releasing or detaching now would leave a live command
       // changing files with nobody watching the Agents.
-      this.abortMutation?.()
+      this.abortMutation?.('market-unloaded')
       return
     }
     if (active !== null && !active.settled) {
