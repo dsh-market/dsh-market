@@ -322,6 +322,8 @@ function toPick(plugin: RegistryPlugin, registry: Registry, preferZh: boolean, w
 const hasModel = (llm: LlmLike | undefined, selection: ModelSelectionLike | undefined): selection is ModelSelectionLike =>
   llm !== undefined && selection !== undefined && Boolean(selection.provider) && Boolean(selection.model)
 
+const JSON_ONLY_REMINDER = 'Reply with ONLY the JSON object described in the instructions: no prose, no markdown, no questions back.'
+
 /** One model call over the candidates; resolve picks only to the entries offered. */
 async function askForPicks(options: {
   llm: LlmLike
@@ -336,7 +338,11 @@ async function askForPicks(options: {
   let text = ''
   let reasoning = ''
   const seen: string[] = []
-  try {
+  // One call to the model. `userText` is what it reads as the user's message.
+  const callModel = async (userText: string): Promise<void> => {
+    text = ''
+    reasoning = ''
+    seen.length = 0
     const stream = options.llm.stream({
       provider: selection.provider,
       model: selection.model,
@@ -344,7 +350,7 @@ async function askForPicks(options: {
       system: prompt.system,
       messages: [Object.freeze({
         id: randomUUID(), role: 'user',
-        content: [{ type: 'text', text: prompt.user }],
+        content: [{ type: 'text', text: userText }],
         source: { kind: 'plugin:dshmarket' },
       })],
       maxTokens: options.maxTokens,
@@ -367,21 +373,40 @@ async function askForPicks(options: {
         throw failure instanceof Error ? failure : Object.assign(new Error(typeof failure === 'string' ? failure : JSON.stringify(failure)), typeof failure === 'object' && failure !== null ? { cause: failure } : {})
       }
     }
-  } catch (error) {
-    const code = errorCode(error)
-    if (code === 'MISSING_CREDENTIAL' || code === 'INVALID_CREDENTIAL') throw new FindPluginError('no-model', NO_MODEL)
-    const reason = error instanceof Error ? error.message : String(error)
-    throw new FindPluginError('model-failed', `模型这次没有回答（${reason}）。请稍后重试，或换一个模型。 / The model did not answer (${reason}). Try again, or switch models.`)
+  }
+  const attempt = async (userText: string): Promise<void> => {
+    try {
+      await callModel(userText)
+    } catch (error) {
+      const code = errorCode(error)
+      if (code === 'MISSING_CREDENTIAL' || code === 'INVALID_CREDENTIAL') throw new FindPluginError('no-model', NO_MODEL)
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new FindPluginError('model-failed', `模型这次没有回答（${reason}）。请稍后重试，或换一个模型。 / The model did not answer (${reason}). Try again, or switch models.`)
+    }
   }
   const byId = new Map(options.candidates.map(({ plugin }, index) => [candidateId(index), plugin]))
+  const allowed = new Set(byId.keys())
+  const read = (): ReturnType<typeof parsePickReply> =>
+    // Out of budget before the answer: the thinking often already holds it.
+    text.trim() === '' && reasoning !== '' ? parsePickReply(reasoning, allowed, options.max) : parsePickReply(text, allowed, options.max)
+  // The instruction rides in the user's message too: a model that reasons
+  // before it answers can take the lists for a chat and reply in prose, which
+  // is how "AI picks for you" kept failing on thinking models (#1331).
+  await attempt(`${prompt.user}\n\n${JSON_ONLY_REMINDER}`)
   let parsed: ReturnType<typeof parsePickReply>
   try {
-    const allowed = new Set(byId.keys())
-    // Out of budget before the answer: the thinking often already holds it.
-    parsed = text.trim() === '' && reasoning !== '' ? parsePickReply(reasoning, allowed, options.max) : parsePickReply(text, allowed, options.max)
+    parsed = read()
   } catch {
-    logEvent('warn', 'find-plugin', `unreadable model reply (${String(text.length)} chars, ${String(reasoning.length)} thinking): ${text.slice(0, 300)} … ${text.slice(-200)} | chunks: ${seen.join(' ')}`)
-    throw new FindPluginError('model-failed', '模型的回答格式不对，没法整理成结果。请重试一次。 / The model\'s answer was not in the expected shape. Try again.')
+    logEvent('warn', 'find-plugin', `unreadable model reply, asking once more with the full instruction (${String(text.length)} chars, ${String(reasoning.length)} thinking): ${text.slice(0, 300)} … ${text.slice(-200)} | chunks: ${seen.join(' ')}`)
+    await attempt(`${prompt.system}\n\n---\n\n${prompt.user}\n\n${JSON_ONLY_REMINDER}`)
+    try {
+      parsed = read()
+    } catch {
+      logEvent('warn', 'find-plugin', `unreadable model reply (${String(text.length)} chars, ${String(reasoning.length)} thinking): ${text.slice(0, 300)} … ${text.slice(-200)} | chunks: ${seen.join(' ')}`)
+      throw new FindPluginError('model-failed', text.trim() === ''
+        ? '模型没有给出回答（可能把输出额度都用在了思考上）。请重试一次，或在 DSH 里换一个模型。 / The model gave no answer (it may have spent its whole output budget thinking). Try again, or switch to another model in DSH.'
+        : '模型回答了，但没有按要求的格式，没法整理成结果。请重试一次，或在 DSH 里换一个模型。 / The model replied, but not in the format asked for, so it could not be turned into results. Try again, or switch to another model in DSH.')
+    }
   }
   return { intro: parsed.intro, picks: parsed.picks.map(({ id, why }) => ({ plugin: byId.get(id)!, why })) }
 }

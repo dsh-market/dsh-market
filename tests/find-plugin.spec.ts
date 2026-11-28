@@ -114,6 +114,31 @@ describe('/find-plugin: the model picks', () => {
   it('reports a reply it cannot read as a retryable failure', async () => {
     await expect(findPlugins({ request: 'seo', registry, llm: fakeModel('sorry, I cannot help'), selection: SELECTION })).rejects.toMatchObject({ code: 'model-failed' })
   })
+
+  it('asks again once, with the whole instruction in the user message, when the first answer is prose (#1331)', async () => {
+    const answers = ['你没提具体问题，我先给个判断……**p1** 不错', '{"intro":"这个合适","picks":[{"id":"p1","why":"做 SEO"}]}']
+    const calls: Array<{ system?: string; messages: unknown[] }> = []
+    const llm: LlmLike = {
+      stream(options) {
+        calls.push(options)
+        const reply = answers[calls.length - 1] ?? ''
+        return (async function* () { yield { type: 'text-delta', text: reply } })()
+      },
+    }
+    const result = await findPlugins({ request: 'seo', registry, llm, selection: SELECTION })
+    expect(result.picks).toHaveLength(1)
+    expect(calls).toHaveLength(2)
+    const userText = (call: { messages: unknown[] }): string => (call.messages[0] as { content: Array<{ text: string }> }).content[0]!.text
+    // Even the first call repeats the format rule beside the lists…
+    expect(userText(calls[0]!)).toMatch(/ONLY the JSON object/)
+    // …and the retry carries the full system instruction in the message itself.
+    expect(userText(calls[1]!)).toContain('Answer ONLY with one JSON object')
+  })
+
+  it('names what went wrong: nothing said, or said in the wrong shape', async () => {
+    await expect(findPlugins({ request: 'seo', registry, llm: fakeModel(''), selection: SELECTION })).rejects.toMatchObject({ message: expect.stringMatching(/没有给出回答/) })
+    await expect(findPlugins({ request: 'seo', registry, llm: fakeModel('just prose, twice'), selection: SELECTION })).rejects.toMatchObject({ message: expect.stringMatching(/没有按要求的格式/) })
+  })
 })
 
 describe('/find-plugin: the command', () => {
