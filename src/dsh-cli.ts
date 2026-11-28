@@ -18,7 +18,7 @@ import { pluginArgsFor } from './pnpm-compat.ts'
 import { createOutputBuffer } from './proc-text.ts'
 import { isDshProfileName, profileDir } from './profile.ts'
 import { activeRegion, DEFAULT_NPM_REGISTRY, routesFor, type Region } from './regions.ts'
-import { NPM_NAME_RE } from './sources.ts'
+import { githubCommitOfTarget, githubTargetAtCommit, NPM_NAME_RE } from './sources.ts'
 import { fetchNpmLatest } from './updates.ts'
 
 // 15 min default (slow networks + git installs), overridable for CI/tests.
@@ -1299,6 +1299,14 @@ export const BOOT_ID = `${String(process.pid)}-${String(Date.now())}`
  */
 export const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
 
+/** A managed add may also carry one canonical GitHub commit and subdirectory. */
+export function acceptsManagedAddTarget(target: string): boolean {
+  if (TARGET_RE.test(target)) return true
+  if (!target.startsWith('github:') || !target.includes('&path:/')) return false
+  const sha = githubCommitOfTarget(target)
+  return sha !== null && githubTargetAtCommit(target, sha) === target
+}
+
 /** pnpm's monorepo selector inside a git target: `&path:/<subdirectory>`. */
 const GIT_SUBPATH_SELECTOR_RE = /^&path:\/[A-Za-z0-9._\-/]*$/
 
@@ -1697,7 +1705,7 @@ export function createDesktopPluginRuntime(
     // Anywhere Labs' optional external boundary accepts exact npm targets
     // only. Every Desktop host without that boundary retains the ordinary
     // CLI grammar, including immutable Git and archive targets.
-    supportsExactRollbackTarget: target => TARGET_RE.test(target)
+    supportsExactRollbackTarget: target => acceptsManagedAddTarget(target)
       && (service.runExternalMarketPluginInstall === undefined || EXACT_NPM_TARGET_RE.test(target)),
     // The service is backed by Desktop's packaged pnpm; system discovery and
     // global provisioning are neither needed nor allowed in this mode.

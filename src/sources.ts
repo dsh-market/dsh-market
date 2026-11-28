@@ -159,7 +159,7 @@ export function codeloadTarball(repo: string, sha: string, proxy: string | null)
  * still carry a prefix-proxied codeload tarball, so both spellings resolve
  * here during update, duplicate detection, and recovery.
  */
-function githubShortcut(spec: string): { repo: string; subpath: string | null } | null {
+export function githubShortcut(spec: string): { repo: string; subpath: string | null } | null {
   const shortcut = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?:#(.*))?$/.exec(spec)
   if (shortcut === null) return null
   // Any non-path fragment is accepted (`#semver:`, a bare ref) because only

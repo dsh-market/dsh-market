@@ -179,11 +179,36 @@ describe('official Electron profile runtime', () => {
     setActiveRegion('china')
     const service = manager()
     const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
-    for (const target of ['example', 'example@2.0.0', 'example@1.0.0']) {
+    for (const target of ['example', 'example@2.0.0', 'example@1.0.0', `github:o/r#${'a'.repeat(40)}&path:/packages/example`]) {
       await expect(runtime.runPlugin('desktop', ['add', target])).resolves.toMatchObject({ exitCode: 0 })
       expect(service.installBundle).toHaveBeenLastCalledWith(target, {
         requestId: expect.any(String), registry: routesFor('china', {}).npmRegistry,
       })
+    }
+    await runtime.dispose()
+  })
+
+  it.each([false, true])('reinstalls only an unambiguous GitHub subdirectory (duplicate = %s)', async duplicate => {
+    const dir = profile()
+    const target = 'github:o/mono#path:/plugins/editor'
+    const pin = `github:o/mono#${'a'.repeat(40)}&path:/plugins/editor`
+    const dependencies = {
+      '@example/editor': pin,
+      '@example/other': 'github:o/mono#path:/plugins/other',
+      ...(duplicate ? { alias: pin } : {}),
+    }
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies }))
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir)
+    const result = await runtime.runPlugin('desktop', ['add', target])
+    if (duplicate) {
+      expect(result.exitCode).not.toBe(0)
+      expect(service.removeBundle).not.toHaveBeenCalled()
+    } else {
+      expect(result.exitCode).toBe(0)
+      expect(service.removeBundle.mock.calls.map(([name]) => name)).toEqual(['@example/editor'])
+      expect(service.installBundle.mock.calls.map(([spec]) => spec)).toEqual([target, target])
     }
     await runtime.dispose()
   })

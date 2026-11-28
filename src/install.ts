@@ -265,7 +265,7 @@ export async function withHoistRecovery(
       logEvent('warn', 'install', `pnpm was momentarily refused on a profile file (antivirus or indexer) — retrying the same command once (#786)`)
       result = await run(profile, pluginArgs)
     } else if (failure?.code === 'transient-network'
-      && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove')
+      && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove' || pluginArgs[0] === 'update')
     ) {
       // #83: pnpm replays the whole tree, so any existing dependency's
       // momentary network hiccup fails the run — and a plain retry succeeds.

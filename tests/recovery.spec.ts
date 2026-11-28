@@ -74,11 +74,11 @@ describe('transient network retry (#83)', () => {
     stderr: 'WARN  GET https://codeload.github.com/KinGao294/dsh-skin/tar.gz/abc error (ERR_PNPM_FETCH_502). Will retry in 10 seconds.\nFetchError: request to https://codeload.github.com/KinGao294/dsh-skin/tar.gz/abc failed, reason: socket hang up',
   }
 
-  it('retries once when pnpm trips over a momentary network failure, and succeeds silently', async () => {
+  it.each(['add', 'update'])('retries %s once on a momentary network failure', async command => {
     const { calls, run } = scriptedRunner([TRANSIENT, OK])
-    const result = await withHoistRecovery(run, 'web', ['add', 'dsh-deepseek-billing'])
+    const result = await withHoistRecovery(run, 'web', [command, 'dsh-deepseek-billing'])
     expect(result.exitCode).toBe(0)
-    expect(calls).toEqual([['add', 'dsh-deepseek-billing'], ['add', 'dsh-deepseek-billing']])
+    expect(calls).toEqual([[command, 'dsh-deepseek-billing'], [command, 'dsh-deepseek-billing']])
   })
 
   it('gives up after one retry with the bilingual replay explanation — no loops', async () => {

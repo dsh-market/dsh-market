@@ -40,7 +40,7 @@ import { marketFetch } from './net.ts'
 import { catalogReleaseSourceOf, publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
 import {
-  BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, setBuildEnvSource, TARGET_RE,
+  BOOT_ID, acceptsManagedAddTarget, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, setBuildEnvSource,
   type InstallResult, type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
@@ -62,7 +62,7 @@ import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnaps
 import { readHostRecoveryView, restoreHostRecoveryBackup } from './host-recovery.ts'
 import type { StartupRepairSnapshot } from './startup-repair-report.ts'
 import { trialValidate } from './trial.ts'
-import { catalogRepoKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedAllowBuildsKeys, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, parseSourceUrl, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
+import { catalogRepoKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubShortcut, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedAllowBuildsKeys, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, parseSourceUrl, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
 import { checkoutSourceExists, detachCheckoutLink, failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, keepCheckoutDetached, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, recordedCheckoutLink, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, removeLeftoverProfileLink, restoreCheckoutLink, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery, type DetachedCheckoutLink } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
@@ -780,7 +780,7 @@ export function mountMarketRoutes(
    */
   const marketFlags = commands.acceptsMarketPnpmFlags !== false
   const supportsExactRollbackTarget = (target: string): boolean =>
-    commands.supportsExactRollbackTarget?.(target) ?? TARGET_RE.test(target)
+    commands.supportsExactRollbackTarget?.(target) ?? acceptsManagedAddTarget(target)
   // Point every plugin build/install spawn at the configured build
   // environment (#336). Read LIVE from `config.buildEnv` because the settings
   // wiring mutates that object when the operator edits the section at runtime;
@@ -2081,7 +2081,7 @@ export function mountMarketRoutes(
     | { kind: 'npm'; beforeVersion: string; lockfileBefore: ProfileLockfileSnapshot }
     // Any git-sourced install, GitHub or not (#632): the exact target is the
     // source pinned to the commit captured before the update.
-    | { kind: 'git'; target: string; beforeCommit: string; lockfileBefore: ProfileLockfileSnapshot; keepRepairedLock: boolean }
+    | { kind: 'git'; target: string; beforeCommit: string; beforeVersion: string | null; lockfileBefore: ProfileLockfileSnapshot; keepRepairedLock: boolean }
     | { kind: 'manifest' }
     | {
       kind: 'linked-checkout'
@@ -2232,6 +2232,7 @@ export function mountMarketRoutes(
     target: string,
     keepRepairedLock = false,
     preserveProfilePolicy = false,
+    expectedGitCommit?: string,
   ): Promise<{ ok: boolean; detail: string | null }> {
     restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     const preparedLock = restoreProfileLockfile(lockfileBefore)
@@ -2252,6 +2253,8 @@ export function mountMarketRoutes(
     const add = await runPlugin(config.profile, marketFlags
       ? ['add', '--force', ...(preserveProfilePolicy ? [] : [RELEASE_AGE_OVERRIDE]), target]
       : ['add', target], preserveProfilePolicy)
+    // Read the resolution pnpm just wrote, before the saved lock replaces it.
+    const wrongCommit = expectedGitCommit !== undefined && gitIdentityCommit(target) !== expectedGitCommit
     // Exact recovery targets deliberately pin versions/commits. Keep the
     // user's durable range, tag, floating github shortcut, or release URL.
     restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
@@ -2259,7 +2262,7 @@ export function mountMarketRoutes(
     // version or pinned Git manifest) disagrees with a missing/stale lock,
     // keep the exact add's repaired OLD resolution. Floating sources instead
     // need their captured importer/lock bytes back.
-    if (!keepRepairedLock || add.exitCode !== 0 || add.timedOut || add.cancelled) {
+    if (wrongCommit || !keepRepairedLock || add.exitCode !== 0 || add.timedOut || add.cancelled) {
       const restoredLock = restoreProfileLockfile(lockfileBefore)
       finalLockError = restoredLock.detail
     }
@@ -2267,6 +2270,7 @@ export function mountMarketRoutes(
     if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
       return { ok: false, detail: failureDetail(add) }
     }
+    if (wrongCommit) return { ok: false, detail: `the reinstall did not resolve to commit ${expectedGitCommit}` }
     if (!hasLoadableEntry(activeProfileDir, name)) {
       return { ok: false, detail: 'the previous source was reinstalled without a loadable entry' }
     }
@@ -2302,7 +2306,7 @@ export function mountMarketRoutes(
    */
   function gitIdentityCommit(spec: string): string | null {
     const fromGit = readGitResolutionCommit(config.profile, spec, activeProfileDir)
-    if (fromGit !== null) return fromGit
+    if (fromGit !== null || repoOfTarget(spec)?.includes('#path:/')) return fromGit
     const key = hostedRepoKey(spec)
     return key === null
       ? null
@@ -2350,6 +2354,7 @@ export function mountMarketRoutes(
     manifestBefore: ProfileManifestSnapshot,
     target: string,
     beforeCommit: string,
+    beforeVersion: string | null,
     lockfileBefore: ProfileLockfileSnapshot,
     keepRepairedLock: boolean,
     preserveProfilePolicy = false,
@@ -2362,13 +2367,10 @@ export function mountMarketRoutes(
     if (rollbackTarget === null) {
       return { ok: false, detail: 'the previous git target is invalid; nothing to roll back to' }
     }
-    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, rollbackTarget, keepRepairedLock, preserveProfilePolicy)
+    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, rollbackTarget, keepRepairedLock, preserveProfilePolicy, beforeCommit)
     if (!rollback.ok) return rollback
-    // What pnpm actually resolved, read back the way the identity was
-    // captured: the codeload tarball for GitHub, the git resolution otherwise.
-    const restoredCommit = gitIdentityCommit(rollbackTarget)
-    if (restoredCommit !== beforeCommit) {
-      return { ok: false, detail: `expected commit ${beforeCommit} after rollback, found ${restoredCommit ?? 'unknown'}` }
+    if (beforeVersion !== null && readInstalledVersion(config.profile, name, activeProfileDir) !== beforeVersion) {
+      return { ok: false, detail: `the reinstalled Git package does not have its previous version ${beforeVersion}` }
     }
     logEvent('info', 'update-rollback', `${name}: restored git build at ${beforeCommit}`)
     return { ok: true, detail: null }
@@ -2659,7 +2661,7 @@ export function mountMarketRoutes(
       return rollbackNpmBuild(name, manifestBefore, source.beforeVersion, source.lockfileBefore, preserveProfilePolicy)
     }
     if (source.kind === 'git') {
-      return rollbackGitBuild(name, manifestBefore, source.target, source.beforeCommit, source.lockfileBefore, source.keepRepairedLock, preserveProfilePolicy)
+      return rollbackGitBuild(name, manifestBefore, source.target, source.beforeCommit, source.beforeVersion, source.lockfileBefore, source.keepRepairedLock, preserveProfilePolicy)
     }
     if (source.kind === 'linked-checkout') return restoreLinkedUpdate(name, source, true)
     return rollbackUpdateBuild(name, manifestBefore, true, preserveProfilePolicy)
@@ -3075,14 +3077,14 @@ export function mountMarketRoutes(
   }
 
   /**
-   * Pin a GitHub shortcut to its current commit when the region has no proxy.
+   * Resolve the default GitHub commit for an install that needs an immutable target.
    *
    * `acceleratedTarget` deliberately leaves global installs to pnpm, but a
    * deferred drain operation must name one immutable artifact. Without this, a
    * bare `github:owner/repo` (and a `#path:` selector) could never satisfy the
    * exact-target gate in the global region.
    */
-  const pinDrainGithubTarget = async (target: string, region: Region): Promise<string> => {
+  const pinGithubTarget = async (target: string, region: Region): Promise<string> => {
     if (githubCommitOfTarget(target) !== null) return target
     const match = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/.exec(target)
     if (match === null) return target
@@ -7078,7 +7080,16 @@ export function mountMarketRoutes(
                   ? genericGitTarget
                   : await acceleratedTarget(gitSpec!, region)
             if (drainCall !== undefined && (drainCall.role === 'probe' || drainCall.expected !== null)) {
-              target = await pinDrainGithubTarget(target, region)
+              target = await pinGithubTarget(target, region)
+            } else if (!marketFlags && !restore) {
+              // The desktop manager owns pnpm's environment. Resolve a floating
+              // GitHub subdirectory over the market's HTTP route so pnpm can
+              // fetch the exact archive without a second git ls-remote.
+              const source = githubShortcut(target)
+              if (source?.subpath != null && target.endsWith(`#path:/${source.subpath}`)) {
+                const pinned = await pinGithubTarget(target, region)
+                if (supportsExactRollbackTarget(pinned)) target = pinned
+              }
             }
             const repoIdentity = isGit ? repoOfTarget(spec) : null
             const repoKey = repoIdentity?.split('#')[0] ?? null
@@ -7087,10 +7098,6 @@ export function mountMarketRoutes(
             // same two reads the update check already trusts for it.
             const genericGit = isGit && repoKey === null
             const sourceKind = repoKey !== null ? 'GitHub' : 'git'
-            // dsh-cli's deliberately narrow target grammar rejects the `&`
-            // required to combine an exact commit and a monorepo path. Do not
-            // weaken that command boundary or offer a rollback action that
-            // the real host can never execute.
             const hasGitSubpath = repoIdentity?.includes('#path:/')
               ?? (genericGit && /#(?:[^#]*&)?path:/.test(spec))
             // Captured BEFORE pnpm replaces the files: afterwards the loader
@@ -7212,7 +7219,7 @@ export function mountMarketRoutes(
               : !lockfileCapture.ok
                 ? { available: false, detail: lockfileCapture.detail }
                 : isGit
-                  ? hasGitSubpath
+                  ? hasGitSubpath && (repoKey === null || gitRollbackTarget === null || !supportsExactRollbackTarget(gitRollbackTarget))
                     ? {
                         available: false,
                         detail: `更新前的 ${sourceKind} 来源使用 monorepo 子目录${beforeCommit === null ? '' : `（提交 ${beforeCommit}）`}，当前 DSH 命令无法表达该精确目标，因此自动回滚不可用；需要时请手工重新安装该提交。 / The previous ${sourceKind} source uses a monorepo subpath${beforeCommit === null ? '' : ` at commit ${beforeCommit}`}; the current DSH command cannot express that exact target, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
@@ -7236,6 +7243,7 @@ export function mountMarketRoutes(
                               kind: 'git',
                               target: spec,
                               beforeCommit,
+                              beforeVersion,
                               lockfileBefore: lockfileCapture.snapshot,
                               keepRepairedLock: keepRepairedGitLock,
                             },
@@ -7339,12 +7347,7 @@ export function mountMarketRoutes(
             // takes market options lets the market verify its own run, and gets
             // no extra manifest write.
             //
-            // A `#path:` spec needs the local pin instead of the host's exact
-            // rollback target: `gitTargetAtCommit` refuses the `&` that carries
-            // a selector beside a commit, because dsh-cli's target grammar has
-            // no room for it — but this value is never sent to the host, which
-            // still receives the bare floating spec. Measured on pnpm 11.7.0 and
-            // 12.4.1, `#<sha>&path:/sub` resolves to exactly that commit.
+            // Other git hosts may only represent a subdirectory pin in the manifest.
             const pinValue = gitRollbackTarget ?? (hasGitSubpath && beforeCommit !== null
               ? pinSpecToCommit(spec, beforeCommit)
               : null)
@@ -9482,7 +9485,7 @@ export function mountMarketRoutes(
             // bare `github:` shortcut to pnpm. A deferred drain operation
             // still needs the commit it was approved against.
             if (drainCall !== undefined && (drainCall.role === 'probe' || drainCall.expected !== null)) {
-              target = await pinDrainGithubTarget(target, region)
+              target = await pinGithubTarget(target, region)
             }
             // Duplicate guard (#27): the same plugin listed under another name
             // (an alias entry pointing at the same repo) must never install
