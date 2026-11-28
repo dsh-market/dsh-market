@@ -1299,7 +1299,7 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
       return {
         code: 'transient-network',
         recoverable: false,
-        message: '下载这个插件的安装包时没能连上 github.com。这个包放在 GitHub Release 上，pnpm 会按条目里的原地址直连下载，市场的下载区域不参与这一步。已自动重试一次；仍失败时请换一个能访问 GitHub 的网络，或稍后再试。 / could not reach github.com while downloading this plugin\'s package. The package lives on a GitHub Release, and pnpm downloads it from the entry\'s original address directly — the market\'s Download region does not cover this step. One automatic retry already failed too; use a network that can reach GitHub, or try again later.',
+        message: '下载这个插件的安装包时没能连上 github.com。这个包放在 GitHub Release 上，pnpm 会按条目里的原地址直连下载，市场的下载区域不参与这一步。请换一个能访问 GitHub 的网络，或稍后再试。 / could not reach github.com while downloading this plugin\'s package. The package lives on a GitHub Release, and pnpm downloads it from the entry\'s original address directly — the market\'s Download region does not cover this step. Use a network that can reach GitHub, or try again later.',
       }
     }
     return {
