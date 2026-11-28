@@ -47,9 +47,9 @@ export function readTelemetryState(file: string = telemetryFile()): TelemetrySta
       ...(typeof value.id === 'string' && /^[0-9a-f]{32}$/.test(value.id) ? { id: value.id } : {}),
       ...(typeof value.lastDay === 'string' ? { lastDay: value.lastDay } : {}),
       ...(typeof value.lastOpenDay === 'string' ? { lastOpenDay: value.lastOpenDay } : {}),
-      enabled: value.enabled !== false,
+      enabled: value.enabled === true,
     }
-  } catch { return { enabled: true } }
+  } catch { return { enabled: false } }
 }
 
 function writeState(state: TelemetryState, file: string): void {

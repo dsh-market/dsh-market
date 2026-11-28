@@ -107,8 +107,17 @@ export function detectedSupervisor(
   parentComm: (pid: number) => string | null = readParentComm,
 ): string | null {
   const set = (name: string): boolean => (env[name] ?? '') !== ''
-  if (!set('INVOCATION_ID') && !set('JOURNAL_STREAM')) return null
-  if (ppid === 1 || parentComm(ppid) === 'systemd') return 'systemd'
+  // systemd: PID 1 or systemd as direct parent
+  if (set('INVOCATION_ID') || set('JOURNAL_STREAM')) {
+    if (ppid === 1 || parentComm(ppid) === 'systemd')
+      return 'systemd'
+  }
+  // pm2: God daemon sets pm_id and runs as parent (not PID 1)
+  if (set('PM2_HOME') || set('pm_id'))
+    return 'pm2'
+  // launchd: macOS launchd sets no env var but is PID 1 on macOS
+  if (process.platform === 'darwin' && ppid === 1)
+    return 'launchd'
   return null
 }
 

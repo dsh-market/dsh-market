@@ -79,7 +79,8 @@
     "client",
     "UPDATE-API-V1.md",
     "cordis.patch.yml",
-    "LICENSE"
+    "LICENSE",
+    "lib/**/*.js.map"
   ],
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
