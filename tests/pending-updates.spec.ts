@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { withIdleProfile, withIdleProfileAsync } from '../src/pending-checkout-links.ts'
 import {
   DeadlineExceeded,
   PendingUpdateJournal,
@@ -65,6 +66,50 @@ function manager(installBundle: (spec: string) => Promise<{ application: string 
 afterEach(() => {
   vi.useRealTimers()
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
+describe('the desktop profile writer during a market overlay (#1328)', () => {
+  it('holds the host lock until the asynchronous write settles and allows the next writer', async () => {
+    const dir = profile()
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    const write = withIdleProfileAsync(dir, async () => { await gate; return 'updated' })
+    try {
+      expect(readFileSync(join(dir, 'package.json.lock'), 'utf8')).toBe(`${process.pid}\n`)
+      const competingWrite = vi.fn()
+      expect(withIdleProfile(dir, competingWrite)).toBeNull()
+      expect(await withIdleProfileAsync(dir, competingWrite)).toBeNull()
+      expect(competingWrite).not.toHaveBeenCalled()
+    } finally {
+      finish()
+      await write
+    }
+    await expect(write).resolves.toBe('updated')
+    expect(withIdleProfile(dir, () => 'idle')).toBe('idle')
+  })
+
+  it('leaves a host writer alone and also checks its unfinished pnpm run under the lock', async () => {
+    const dir = profile()
+    const lock = join(dir, 'package.json.lock')
+    writeFileSync(lock, `${process.pid}\n`)
+    const write = vi.fn()
+    expect(await withIdleProfileAsync(dir, write)).toBeNull()
+    expect(readFileSync(lock, 'utf8')).toBe(`${process.pid}\n`)
+    rmSync(lock)
+
+    mkdirSync(join(dir, '.plugin-manager'))
+    writeFileSync(join(dir, '.plugin-manager', 'run.json'), JSON.stringify({ pid: process.pid, grouped: false }))
+    expect(await withIdleProfileAsync(dir, write)).toBeNull()
+    expect(write).not.toHaveBeenCalled()
+    expect(withIdleProfile(dir, () => 'released')).toBe('released')
+  })
+
+  it('releases the profile when the asynchronous write rejects', async () => {
+    const dir = profile()
+    const error = new Error('overlay failed')
+    await expect(withIdleProfileAsync(dir, () => Promise.reject(error))).rejects.toBe(error)
+    await expect(withIdleProfileAsync(dir, () => Promise.resolve('retried'))).resolves.toBe('retried')
+  })
 })
 
 describe('the pending-update journal', () => {

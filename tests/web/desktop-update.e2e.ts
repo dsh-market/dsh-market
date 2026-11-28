@@ -6,8 +6,8 @@
  * boot one by that name). The scaffold's `officialDesktop` option gets the
  * same code path on a plain host — the market's own config names the profile
  * `desktop`, `profiles/desktop` points at the real one — so every install,
- * update and removal below goes through `ctx.get('pluginManager')`, never
- * through a pnpm the market spawns.
+ * update and removal of another plugin goes through `ctx.get('pluginManager')`.
+ * The market itself can overlay its files using pnpm supplied by Desktop.
  *
  * What it pins, on whatever host `DSHM_E2E_DSH` names:
  *
@@ -20,7 +20,7 @@
  * - Earlier hosts have no manager: the market directs users to Settings.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { load as loadYaml } from 'js-yaml'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -218,7 +218,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the official desktop branch drive
   })
 })
 
-describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through the host manager', () => {
+describe.skipIf(!HAS_DSH).sequential('web e2e: a desktop self-update keeps the installed market', () => {
   let scaffold: WebScaffold
   let base: string
   // Versions that were never published: the public registry has no 9.x, so a
@@ -226,6 +226,9 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
   // real release that happens to share the number.
   const current = '9.0.1'
   const next = '9.0.2'
+  // The published dsh CLI has no launcher pnpm. Set this when running with
+  // the Desktop app's own CLI, which supplies its bundled pnpm to the market.
+  const launcherPnpm = process.env.DSHM_E2E_DESKTOP_PNPM === '1'
 
   beforeAll(async () => {
     scaffold = await launchMarketScaffold({
@@ -249,10 +252,12 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
   const diskVersion = (): string => (JSON.parse(readFileSync(
     join(scaffold.home, 'profiles', 'web', 'node_modules', 'dshmarket', 'package.json'), 'utf8',
   )) as { version: string }).version
-  const marketLog = async (): Promise<string> => (await scaffold.api('/dsh-market/logs')).text()
   const journal = (): string => {
     const file = join(scaffold.home, 'profiles', 'web', '.dsh-market', 'pending-updates.json')
     return existsSync(file) ? readFileSync(file, 'utf8') : ''
+  }
+  const profileManifest = () => JSON.parse(readFileSync(join(scaffold.home, 'profiles', 'web', 'package.json'), 'utf8')) as {
+    dependencies: Record<string, string>; dsh: { profile: { bundles: string[] } }
   }
   const waitFor = async <T>(read: () => Promise<T>, done: (value: T) => boolean, what: string): Promise<T> => {
     let last = await read()
@@ -264,17 +269,42 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
     return last
   }
 
-  it('updates through the host when supported and keeps serving', async () => {
+  it.skipIf(mode !== 'in-place')('keeps the market when neither the new nor the old build can be installed (#1328)', async () => {
+    const workspace = join(scaffold.home, 'profiles', 'web', 'pnpm-workspace.yaml')
+    const previous = existsSync(workspace) ? readFileSync(workspace, 'utf8') : null
+    const manifest = profileManifest()
+    // Both builds depend on js-yaml. Only the already-installed files work
+    // now: if the host removes them, even restoring the old version will fail.
+    writeFileSync(workspace, `${previous ?? ''}\noverrides:\n  "dshmarket>js-yaml": "npm:${A}@99.0.0"\n`)
+    try {
+      scaffold.publish('dshmarket', next)
+      const response = await post('/dsh-market/update', { name: 'dshmarket' })
+      const body = await response.text()
+      expect(response.status, body).toBe(502)
+      if (launcherPnpm) expect(body).toContain('ERR_PNPM_NO_MATCHING_VERSION')
+      expect(diskVersion()).toBe(current)
+      expect(profileManifest()).toMatchObject({ dependencies: manifest.dependencies, dsh: { profile: { bundles: manifest.dsh.profile.bundles } } })
+      expect(journal()).not.toContain('dshmarket')
+      expect((await status()).version).toBe(current)
+    } finally {
+      if (previous === null) rmSync(workspace)
+      else writeFileSync(workspace, previous)
+    }
+  })
+
+  it('updates without unloading itself, or keeps the old version when it cannot (#1328)', async () => {
     const before = await status()
     expect(before).toMatchObject({ desktopHost: true, selfManaged: true, version: current })
     scaffold.publish('dshmarket', next)
     const response = await post('/dsh-market/update', { name: 'dshmarket' })
     const body = await response.text()
-    if (mode === 'settings' || mode === 'reinstall') {
-      // Without a manager all writes go to Settings. A remove-then-install
-      // manager can update other plugins, but removing the market would
-      // unload the installer itself (#900). Plain hosts lack the launcher
-      // pnpm that handles this case in Electron.
+    const manifest = profileManifest()
+    expect(manifest.dsh.profile.bundles).toContain('dshmarket')
+    expect(manifest.dependencies).toHaveProperty('dshmarket')
+    expect(journal()).not.toContain('dshmarket')
+    if (mode === 'settings' || (mode !== 'restart' && !launcherPnpm)) {
+      // Live managers unload the caller in updateBundle or removeBundle.
+      // Without launcher pnpm the old market must keep answering.
       expect(response.status, body).toBe(502)
       expect(JSON.parse(body)).toMatchObject(mode === 'settings'
         ? { ok: false, exitCode: 127, stderr: expect.stringContaining('Settings → Plugins') }
@@ -284,31 +314,16 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the market updates ITSELF through
       return
     }
     expect(response.status, body).toBe(200)
-    const reply = JSON.parse(body) as { ok?: boolean; selfSwapped?: boolean; activation?: Record<string, { state: string }> }
+    const reply = JSON.parse(body) as { ok?: boolean; selfSwapped?: boolean }
     expect(reply.ok).toBe(true)
+    expect(reply.selfSwapped).not.toBe(true)
     expect(diskVersion()).toBe(next)
-    if (mode === 'restart') {
-      expect((await status()).version).toBe(current)
-      await scaffold.restart()
-      expect((await status()).version).toBe(next)
-    } else {
-      // The instance that answered this request has already been replaced.
-      expect(reply.selfSwapped).toBe(true)
-      // The new SERVER half is the one answering: its `version` is read from
-      // the package.json it was loaded beside, so only a re-evaluated module
-      // can say the new number.
-      await waitFor(async () => (await status().catch(() => ({ version: undefined }))).version, version => version === next, 'the new server half')
-      expect(await marketLog()).not.toContain('inactive context')
-      // Nothing is left half-done for the next start to repair.
-      expect(journal()).not.toContain('dshmarket')
-      // The page's own "apply now" asks the server to swap; there is nothing
-      // left to swap, and it says so instead of failing.
-      const reload = await post('/dsh-market/reload-self', {})
-      expect(await reload.json()).toMatchObject({ ok: true, outcome: 'current', version: next })
-    }
+    expect((await status()).version).toBe(current)
+    await scaffold.restart()
+    expect((await status()).version).toBe(next)
   })
 
-  it.skipIf(mode === 'settings' || mode === 'reinstall')('does not wedge later operations: the new instance is idle and installs a plugin', async () => {
+  it.skipIf(mode === 'settings')('keeps serving after the update attempt and can install another plugin', async () => {
     const idle = await waitFor(async () => status(), value => (value as { busy?: boolean }).busy !== true, 'the new instance going idle')
     expect(idle).toMatchObject({ busy: false })
     const installed = await post('/dsh-market/install', { url: 'https://github.com/dshm-e2e/dshm-e2e-fixture-a' })

@@ -21,7 +21,9 @@ import {
   withDeadline,
   type RepairReport,
 } from './pending-updates.ts'
-import { profileDir, readInstalledVersion } from './profile.ts'
+import { profileDir, readInstalledManifest, readInstalledVersion } from './profile.ts'
+import { withIdleProfileAsync } from './pending-checkout-links.ts'
+import { defaultHostRuntimeFacts, hostPeerGate } from './verify.ts'
 import { activeRegion, DEFAULT_NPM_REGISTRY, routesFor } from './regions.ts'
 
 interface ManagedResult {
@@ -44,11 +46,6 @@ interface ManagedResult {
   untouched?: boolean
   /** One more plain sentence for the user, appended to the failure's account. */
   note?: string
-  /**
-   * The host replaced the running market itself during this call: the
-   * instance that asked is already disposed (see `updateInPlace`).
-   */
-  selfSwapped?: boolean
   /**
    * The host loaded the new build into the running process itself (HMR):
    * `applied`, not `restart-required`. The old module is gone from memory, so
@@ -161,6 +158,11 @@ export interface OfficialPluginManagerLike {
   ): Promise<ManagedUpdateResult>
   /** Used with `updateBundle` to learn which bundles it can replace (`update`). */
   listBundles?(): Promise<ManagedBundleRow[]>
+  /** Read-only registry and compatibility checks, including the profile's version exemptions. */
+  listVersions?(name: string, options: { registry?: string }): Promise<
+    | { status: 'listed'; registry: string | null; versions: readonly { version: string; incompatible?: unknown }[] }
+    | { status: 'refused'; reason: string }
+  >
 }
 
 /**
@@ -308,10 +310,13 @@ const SELF_NAMES = new Set(['dshmarket', 'dsh-market'])
  * performs the same two steps from outside the market and survives.
  */
 function selfUpdateMessage(spec: string): string {
+  const name = registryNameOf(spec)
+  if (name === undefined) {
+    return `桌面端没有提供原地更新市场所需的 pnpm。请完全退出 DSH Desktop，在此 profile 目录执行 \`pnpm add ${spec}\`，再重新启动。 / The desktop app did not provide pnpm to update the running market. Quit DSH Desktop completely, run \`pnpm add ${spec}\` in this profile directory, then start DSH again.`
+  }
   const at = spec.indexOf('@', 1)
   const version = at === -1 ? '' : spec.slice(at + 1)
-  const target = version === '' ? spec : `${registryNameOf(spec) ?? spec}@${version}`
-  const name = registryNameOf(spec) ?? spec
+  const target = spec
   // Two paths that used to be named here do not exist on dsh 0.2.1, and a
   // reporter proved both (#909): `dsh plugin --profile desktop` is refused
   // outright, and the app's Settings → Plugins has no update entry — its
@@ -396,6 +401,7 @@ interface UpdateContext {
   packageManager?: HostPackageManager | null
   /** Told when the market starts or ends a pnpm child of its own (the self-update overlay). */
   onOwnChild?: (running: boolean) => void
+  canStartOverlay: (requestId: string | undefined) => boolean
   /**
    * The Git commit's package version, for a Git bundle's in-place update: the
    * host demands the exact version the spec will install, and a commit's
@@ -459,13 +465,8 @@ interface InPlaceUpdate {
  * - a package the host does not list as updatable (`update` absent): a link,
  *   a floating Git spec, an `npm:` alias, an installation-owned package;
  *
- * The market itself is NOT on that list any more. It used to be (#900: with
- * HMR the host removes the bundle first, which unloads the code that was going
- * to install the new one), because the pair was driven from here, step by
- * step. `updateBundle` runs the pair inside the host, which does not care that
- * the caller is gone; what is left to handle is the request that asked, see
- * `updateInPlace`. A host without `updateBundle` never reaches this code and
- * keeps the market's own overlay (`updateMarketInPlace`).
+ * For a Git spec the row also identifies the installed package. The caller
+ * needs that identity to keep the market itself out of remove-then-install.
  */
 async function planInPlaceUpdate(
   manager: OfficialPluginManagerLike,
@@ -585,8 +586,7 @@ async function updateInPlace(
     if (context !== undefined && readInstalledVersion(context.profile, plan.name, context.profileDirectory) === plan.from) settle()
     throw error
   } finally {
-    // The listener hangs off the context that asked, which a self-update has
-    // already disposed by now; letting go of it must never decide the answer.
+    // The host can dispose the listening context while the update is running.
     try { unwatch?.() } catch { /* nothing left to release */ }
   }
   const last = outcome.result
@@ -596,24 +596,10 @@ async function updateInPlace(
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(result.packageResult === undefined ? {} : { packageResult: result.packageResult }),
   })
-  // The market updating ITSELF. With HMR the host removes the running bundle
-  // before it installs the new one, so by the time this call answers, this
-  // very instance has been disposed and its replacement is serving (measured
-  // on dsh 0.2.2-rc.5 and 0.2.3-alpha.2, tests/web/desktop-update.e2e.ts).
-  // What survives is this closure: it can still answer the HTTP request —
-  // the response belongs to the web server, not to the plugin — but anything
-  // that asks the disposed context for a service (`loader`, to read what is
-  // live) throws, which turned a finished update into a 500. The caller is
-  // told, and answers from the result alone. Without HMR the host installs
-  // over the running version instead (`restart-required`), nothing is
-  // disposed, and the ordinary reply applies.
-  const tornDown = SELF_NAMES.has(plan.name) && outcome.step === 'install'
-    && (kept(last) ? last.application !== 'restart-required' : outcome.restore !== undefined)
-  const swapped = <T extends ManagedResult>(result: T): T => tornDown ? { ...result, selfSwapped: true } : result
   if (outcome.step === 'install' && kept(last)) {
     settle()
     if (last.application === 'restart-required') markRestartPending()
-    return swapped({ ...asManaged(last), ...(last.application === 'applied' ? { liveSwap: true } : {}) })
+    return { ...asManaged(last), ...(last.application === 'applied' ? { liveSwap: true } : {}) }
   }
   if (outcome.step === 'check') {
     settle()
@@ -649,11 +635,11 @@ async function updateInPlace(
   if (outcome.restore !== undefined) {
     if (kept(outcome.restore)) {
       settle()
-      return swapped({
+      return {
         ...asManaged(last),
         untouched: true,
         note: '旧版本已经装回，没有丢东西。 / The old version was put back; nothing was lost.',
-      })
+      }
     }
     // Neither version is installed. Do not ask the same host to restore it
     // again from the route (it just failed to) and keep the record, re-aimed
@@ -662,11 +648,11 @@ async function updateInPlace(
     if (record !== undefined && context !== undefined) {
       context.journal.begin({ profile: context.profile, name: plan.name, from: plan.from, to: plan.from, spec: `${plan.name}@${plan.from}` })
     }
-    return swapped({
+    return {
       ...asManaged(last),
       repairOnRestart: true,
       note: `旧版本也没能装回，这个插件现在是缺的。重新打开 DSH 后市场会自动装回 ${plan.from}；也可以现在从「设置 → 插件」重新安装它。 / The old version could not be put back either, so the plugin is missing right now. Reopen DSH and the market will reinstall ${plan.from}, or reinstall it from Settings → Plugins now.`,
-    })
+    }
   }
   // No restore ran: a host without HMR installs over the running version and
   // the failure left the old files in place. That is the ordinary failed
@@ -685,29 +671,76 @@ async function updateInPlace(
  * No `--config.minimum-release-age=0` — that write is #944.
  */
 async function updateMarketInPlace(
+  manager: OfficialPluginManagerLike,
   spec: string,
   name: string,
   options: { requestId?: string; registry?: string },
   context?: UpdateContext,
+  plan?: InPlaceUpdate,
 ): Promise<ManagedResult> {
   const invocation = context?.packageManager
   const directory = context?.profileDirectory
   if (context === undefined || invocation === undefined || invocation === null || directory === undefined) {
     return { application: 'failed', error: { code: 'market-self-update', message: selfUpdateMessage(spec) } }
   }
-  progress.lastLine = '正在更新市场本身，不会先卸载它 / Updating the market itself without unloading it'
+  let registry = options.registry
   const args = ['add', spec]
-  if (typeof options.registry === 'string' && options.registry !== '') args.push(`--registry=${options.registry}`)
-  context.onOwnChild?.(true)
-  const run = await runHostPnpm(invocation, directory, args).finally(() => context.onOwnChild?.(false))
+  if (plan !== undefined && plan.gitSpec === undefined) {
+    args.push('--save-exact')
+    if (manager.listVersions !== undefined) {
+      try {
+        const listing = await manager.listVersions(name, { registry })
+        if (listing.status === 'refused') {
+          return { application: 'failed', untouched: true, error: { code: 'operation-error', diagnostic: listing.reason } }
+        }
+        if (listing.versions.find(row => row.version === plan.to)?.incompatible !== undefined) {
+          return { application: 'failed', untouched: true, error: { code: 'incompatible-version' } }
+        }
+        registry = listing.registry ?? undefined
+      } catch (error) {
+        return { application: 'failed', untouched: true, error }
+      }
+    }
+  }
+  if (registry) args.push(`--registry=${registry}`)
+  if (!context.canStartOverlay(options.requestId)) return { application: 'cancelled', untouched: true }
+  const result = await withIdleProfileAsync(directory, async (): Promise<ManagedResult> => {
+    // Settings may have finished another update while the registry was answering.
+    if (plan !== undefined && readInstalledVersion(context.profile, name, directory) !== plan.from) {
+      return { application: 'failed', untouched: true, error: { code: 'invalid-spec' } }
+    }
+    progress.lastLine = '正在更新市场本身，不会先卸载它 / Updating the market itself without unloading it'
+    context.onOwnChild?.(true)
+    const run = await runHostPnpm(invocation, directory, args).finally(() => context.onOwnChild?.(false))
+    const wanted = plan?.to ?? targetVersionOf(spec)
+    return marketOverlayResult(run, spec, name, wanted, context)
+  })
+  return result ?? {
+    application: 'failed',
+    untouched: true,
+    error: { message: '桌面端正在更改插件，请等它完成后重试。 / The desktop app is changing plugins. Try again when it finishes.' },
+  }
+}
+
+function marketOverlayResult(run: InstallResult, spec: string, name: string, wanted: string, context: UpdateContext): ManagedResult {
+  const directory = context.profileDirectory
   const output = `${run.stdout}\n${run.stderr}`.trim()
   if (run.cancelled) {
     return { application: 'cancelled', packageResult: { exitCode: run.exitCode, output } }
   }
   if (run.exitCode === 0 && run.timedOut !== true) {
-    const landed = readInstalledVersion(context.profile, name, directory) ?? ''
-    const wanted = targetVersionOf(spec)
+    const manifest = readInstalledManifest(context.profile, name, directory) as { name?: string; version?: string; dsh?: { bundle?: unknown } } | null
+    const landed = manifest?.version ?? ''
     if (wanted === '' ? landed !== '' : landed === wanted) {
+      // The published list may be capped or its metadata may omit dsh.bundle.
+      // Check the actual files before telling the running market to use them.
+      if (manifest?.name !== name || !manifest.dsh?.bundle || hostPeerGate(directory, name, defaultHostRuntimeFacts(directory)) !== null) {
+        return {
+          application: 'failed',
+          error: { message: '下载的包与此市场或当前宿主不匹配，请核对更新版本。 / The downloaded package does not match this market or host. Check the update version.' },
+          packageResult: { exitCode: 1, output },
+        }
+      }
       return { application: 'restart-required', packageResult: { exitCode: 0, output: run.stdout } }
     }
     return {
@@ -786,8 +819,18 @@ async function installOrReinstall(
   // (Not awaited on a manager without it: the install call stays synchronous.)
   const plan = typeof manager.updateBundle === 'function' ? await planInPlaceUpdate(manager, spec, context) : null
   if (plan !== null) {
-    const updated = await updateInPlace(manager, plan, options, context)
-    if (updated !== null) return updated
+    if (SELF_NAMES.has(plan.name)) {
+      // With HMR the host removes the running market before installing. If
+      // its restore also fails, no market remains to replay the journal (#1328).
+      if (context?.packageManager != null || plan.gitSpec !== undefined) {
+        return updateMarketInPlace(manager, spec, plan.name, options, context, plan)
+      }
+      // Without launcher pnpm, a non-HMR host can still install a registry
+      // spec over the old build. An HMR host refuses it as already installed.
+    } else {
+      const updated = await updateInPlace(manager, plan, options, context)
+      if (updated !== null) return updated
+    }
   }
   let first: ManagedResult
   try {
@@ -807,7 +850,7 @@ async function installOrReinstall(
   // Removing the market would unload this very code before the reinstall runs
   // (#900). Overlay the version with the host's own pnpm instead — no remove.
   if (SELF_NAMES.has(name)) {
-    return updateMarketInPlace(spec, name, options, context)
+    return updateMarketInPlace(manager, spec, name, options, context)
   }
   const record = context === undefined
     ? undefined
@@ -982,6 +1025,7 @@ export function createOfficialDesktopRuntime(
       journal,
       packageManager,
       onOwnChild: running => { ownsChild = running },
+      canStartOverlay: requestId => !disposed && active !== undefined && active.requestId === requestId && !active.cancelled,
       ...(hooks?.gitVersionAt === undefined ? {} : { gitVersionAt: hooks.gitVersionAt }),
       ...(hooks?.watchUpdateSteps === undefined ? {} : { watchUpdateSteps: hooks.watchUpdateSteps }),
     }
@@ -1117,7 +1161,6 @@ export function createOfficialDesktopRuntime(
         // tell a self-update refusal from an ordinary failure.
         ...(ok ? {} : { refusalCode: managementCode(result.error) }),
         ...(result.needsRestart === true ? { needsRestart: true } : {}),
-        ...(result.selfSwapped === true ? { selfSwapped: true } : {}),
         ...(ok && result.liveSwap === true ? { liveSwap: true } : {}),
       }
     }, (error): InstallResult => {
