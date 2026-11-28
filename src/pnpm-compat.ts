@@ -87,7 +87,12 @@ export interface PnpmFailure {
  * deliberately absent: retrying those just doubles the wait for bad news.
  */
 export function isTransientPnpmFailure(output: string): boolean {
-  return /ERR_PNPM_FETCH_5\d\d|ERR_PNPM_META_FETCH_FAIL|FetchError|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|socket hang up|network timeout/i.test(output)
+  // pnpm 11's undici reports connection failures through its own codes
+  // (`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, …) instead of the older
+  // `ETIMEDOUT`/`ECONNRESET` pair. They are the same momentary shape and
+  // deserve the same #83 retry; without them a direct Release-asset download
+  // that times out is reported as a permanent failure (#1325).
+  return /ERR_PNPM_FETCH_5\d\d|ERR_PNPM_META_FETCH_FAIL|FetchError|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_CLOSED|socket hang up|network timeout|fetch failed/i.test(output)
 }
 
 /**
@@ -99,6 +104,10 @@ export function isTransientPnpmFailure(output: string): boolean {
  * mention plus an unrelated `ECONNRESET` elsewhere (e.g. codeload) must not
  * push the user to switch Download region.
  */
+function isGithubReleaseAssetDownload(output: string): boolean {
+  return /https:\/\/github\.com\/[^\s"'<>]+\/releases\/download\/[^\s"'<>]+/i.test(output)
+}
+
 function isChinaMirrorTarballReset(output: string): boolean {
   const hostPath = CHINA_NPM_REGISTRY.replace(/^https?:\/\//i, '')
   const escaped = hostPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -1280,6 +1289,17 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
         code: 'transient-network',
         recoverable: false,
         message: '中国大陆下载线路在拉这个安装包时被断开了。再走同一条线路通常没用。打开设置，把「下载区域」改成「全球」，然后再装一次 / the China mainland download route was interrupted while fetching this package. Trying the same route again usually will not help. Open Settings, switch Download region to Global, and install again',
+      }
+    }
+    // #1325: a Release asset is handed to pnpm as the entry's own URL, so the
+    // download goes to github.com directly even when the region has proxies.
+    // A transient failure here is therefore not fixed by another attempt on
+    // the same route; say what the next step actually is.
+    if (isGithubReleaseAssetDownload(output)) {
+      return {
+        code: 'transient-network',
+        recoverable: false,
+        message: '下载这个插件的安装包时没能连上 github.com。这个包放在 GitHub Release 上，pnpm 会按条目里的原地址直连下载，市场的下载区域不参与这一步。已自动重试一次；仍失败时请换一个能访问 GitHub 的网络，或稍后再试。 / could not reach github.com while downloading this plugin\'s package. The package lives on a GitHub Release, and pnpm downloads it from the entry\'s original address directly — the market\'s Download region does not cover this step. One automatic retry already failed too; use a network that can reach GitHub, or try again later.',
       }
     }
     return {
