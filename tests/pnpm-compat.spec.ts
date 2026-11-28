@@ -573,8 +573,27 @@ The lockfile contains entries that the active policies reject.`)
     expect(flake?.message).toContain('重放整个依赖树')
     expect(classifyPnpmFailure('GET https://registry.npmjs.org/x error (ERR_PNPM_FETCH_503)')?.code).toBe('transient-network')
     expect(classifyPnpmFailure('connect ETIMEDOUT 140.82.112.10:443')?.code).toBe('transient-network')
+    // pnpm 11's undici uses its own codes; a Release-asset fetch that times
+    // out is the same momentary failure as ETIMEDOUT (#1325).
+    expect(classifyPnpmFailure('TypeError: fetch failed\n  caused by: UND_ERR_CONNECT_TIMEOUT: Connect Timeout Error')?.code).toBe('transient-network')
+    expect(classifyPnpmFailure('UND_ERR_SOCKET: other side closed')?.code).toBe('transient-network')
     // Permanent shapes must NOT read as transient: retrying doubles the pain.
     expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404')?.code).toBe('fetch-404')
+  })
+
+  it('names the direct github.com download when a Release asset times out (#1325)', () => {
+    const failure = classifyPnpmFailure([
+      'GET https://github.com/HKUSTDial/DeepSeek-Ducktor/releases/download/v1.2.3/deepseek-ducktor-1.2.3.tgz error (UND_ERR_CONNECT_TIMEOUT). Will retry in 10 seconds. 2 retries left.',
+      'TypeError: fetch failed',
+    ].join('\n'))
+    expect(failure?.code).toBe('transient-network')
+    // The asset URL is handed to pnpm unchanged, so the region's GitHub
+    // proxies never see it; switching Download region would not help.
+    expect(failure?.message).toContain('GitHub Release')
+    expect(failure?.message).toContain('直连')
+    expect(failure?.message).toContain('能访问 GitHub')
+    expect(failure?.message).not.toContain('改成')
+    expect(failure?.message).not.toContain('switch Download region')
   })
 
   it('points at Download region → Global when the China npm mirror resets a tarball (#926)', () => {
