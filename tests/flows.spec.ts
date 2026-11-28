@@ -5767,7 +5767,7 @@ describe('update flow — no npm publishing required', () => {
       artifacts: ['lib/index.js'],
       lockCommit: NEW,
       byCommit: {
-        [OLD]: { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        [OLD]: { manifest: { name: 'dsh-loop', version: '0.0.1', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
       },
     }
 
@@ -5838,7 +5838,7 @@ describe('update flow — no npm publishing required', () => {
       artifacts: ['lib/index.js'],
       lockCommit: NEW,
       byCommit: {
-        [OLD]: { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        [OLD]: { manifest: { name: 'dsh-loop', version: '0.0.1', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
       },
     }
 
